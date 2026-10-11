@@ -49,17 +49,17 @@ const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const T = {
   hi: {
     none: 'अभी कोई चेतावनी जारी नहीं है', noneSub: 'डिस्पैचर द्वारा स्वीकृत चेतावनी यहाँ दिखेगी।',
-    red: (n) => `${n} स्थानों पर उच्च जोखिम`, amber: (n) => `${n} स्थानों पर सतर्कता`, clear: 'कोई स्थान चेतावनी स्तर पर नहीं',
-    valid: 'मान्य', approved: 'डिस्पैचर ने स्वीकृत किया', avoid: 'अभी न जाएँ', check: 'जाने से पहले जाँचें',
-    doRed: 'इन रास्तों से अभी वाहन न ले जाएँ। डिस्पैचर की पुष्टि का इंतज़ार करें।', doAmber: 'इन रास्तों पर जाने से पहले डिस्पैचर से स्थिति पूछें।',
+    red: (n) => `${n} स्थानों पर भारी बारिश जारी`, forecast: (n) => `${n} स्थानों पर भारी बारिश का पूर्वानुमान`, amber: (n) => `${n} स्थानों पर सतर्कता`, clear: 'कोई स्थान चेतावनी स्तर पर नहीं',
+    valid: 'मान्य', approved: 'डिस्पैचर ने स्वीकृत किया', avoid: 'अभी न जाएँ', plan: 'भारी बारिश का पूर्वानुमान', check: 'जाने से पहले जाँचें',
+    doRed: 'इन रास्तों से अभी वाहन न ले जाएँ। डिस्पैचर की पुष्टि का इंतज़ार करें।', doPlan: 'यहाँ भारी बारिश हो सकती है। दूसरा रास्ता सोचकर रखें और निकलने से पहले डिस्पैचर से पूछें।', doAmber: 'इन रास्तों पर जाने से पहले डिस्पैचर से स्थिति पूछें।',
     now: 'बारिश जारी', replay: 'यह पिछले दिन का रीप्ले है, आज की चेतावनी नहीं।', drill: 'यह अभ्यास (ड्रिल) है, असली मौसम नहीं।',
     foot: 'यह अनुमान बारिश पर आधारित है, सड़क पर पानी की पुष्टि नहीं। सीमाएँ अनुमानित हैं। रास्ते की स्थिति खुद भी देखें और डिस्पैचर को बताएँ।', zone: 'दिल्ली',
   },
   en: {
     none: 'No advisory is active', noneSub: 'An alert appears here once a dispatcher approves it.',
-    red: (n) => `High risk at ${n} location${n > 1 ? 's' : ''}`, amber: (n) => `Watch at ${n} location${n > 1 ? 's' : ''}`, clear: 'No location is at warning level',
-    valid: 'Valid', approved: 'Approved by dispatcher', avoid: 'Do not go now', check: 'Check before you go',
-    doRed: 'Do not drive through these now. Wait for the dispatcher to confirm.', doAmber: 'Ask the dispatcher about conditions before taking these.',
+    red: (n) => `Heavy rain now at ${n} location${n > 1 ? 's' : ''}`, forecast: (n) => `Heavy rain forecast at ${n} location${n > 1 ? 's' : ''}`, amber: (n) => `Watch at ${n} location${n > 1 ? 's' : ''}`, clear: 'No location is at warning level',
+    valid: 'Valid', approved: 'Approved by dispatcher', avoid: 'Do not go now', plan: 'Heavy rain forecast', check: 'Check before you go',
+    doRed: 'Do not drive through these now. Wait for the dispatcher to confirm.', doPlan: 'Heavy rain may fall here. Have another route in mind and ask the dispatcher before you leave.', doAmber: 'Ask the dispatcher about conditions before taking these.',
     now: 'RAIN NOW', replay: 'This is a replay of a past day, not a warning for today.', drill: 'This is a drill, not real weather.',
     foot: 'This estimate is based on rainfall, not on confirmed water on the road. Limits are estimates. Check the road yourself and report conditions to the dispatcher.', zone: 'Delhi',
   },
@@ -75,12 +75,13 @@ function render() {
   document.querySelector('#foot').textContent = t.foot;
   if (!data || !data.active) { banner.className = 'banner'; note.hidden = true; lists.innerHTML = ''; document.querySelector('#headline').textContent = t.none; document.querySelector('#sub').textContent = t.noneSub; return; }
   note.hidden = !(data.kind === 'replay' || data.kind === 'drill'); note.textContent = data.kind === 'drill' ? t.drill : t.replay;
-  const red = data.flagged.filter((f) => f.risk_level === 'red'), amber = data.flagged.filter((f) => f.risk_level === 'amber');
-  banner.className = `banner ${red.length ? 'red' : amber.length ? 'amber' : 'green'}`;
-  document.querySelector('#headline').textContent = red.length ? t.red(red.length) : amber.length ? t.amber(amber.length) : t.clear;
+  // Only rain that is already falling tells a driver to stop; a forecast asks them to prepare.
+  const red = data.flagged.filter((f) => f.risk_level === 'red' && f.rain_now), plan = data.flagged.filter((f) => f.risk_level === 'red' && !f.rain_now), amber = data.flagged.filter((f) => f.risk_level === 'amber');
+  banner.className = `banner ${red.length ? 'red' : plan.length || amber.length ? 'amber' : 'green'}`;
+  document.querySelector('#headline').textContent = red.length ? t.red(red.length) : plan.length ? t.forecast(plan.length) : amber.length ? t.amber(amber.length) : t.clear;
   document.querySelector('#sub').textContent = `${t.valid}: ${day(data.window_start)}, ${hhmm(data.window_start)}–${hhmm(data.window_end)} · ${t.approved}`;
   const block = (items, title, action, cls) => items.length ? `<h2>${title} (${items.length})</h2><p class="do">${action}</p>` + items.map((f) => `<div class="spot ${cls}"><b>${esc(f.name)}${f.rain_now ? `<em>${t.now}</em>` : ''}</b><span>${esc(lang === 'hi' ? (ZONES_HI[f.zone] || f.zone || '') : (f.zone || ''))} ${t.zone}</span></div>`).join('') : '';
-  lists.innerHTML = block(red, t.avoid, t.doRed, 'red') + block(amber, t.check, t.doAmber, 'amber');
+  lists.innerHTML = block(red, t.avoid, t.doRed, 'red') + block(plan, t.plan, t.doPlan, 'amber') + block(amber, t.check, t.doAmber, 'amber');
 }
 async function load() {
   try { const r = await fetch(`${API}/advisory`); data = r.ok ? await r.json() : null; } catch { data = null; }

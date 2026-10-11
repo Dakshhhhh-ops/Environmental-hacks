@@ -21,6 +21,7 @@ from ..models import (
 from ..services.spots_loader import load_spots
 from ..services.risk import assess_spot, apply_recorded_rain
 from ..services.routing import PLACES, check_route
+from ..services.ask import ask
 from ..services.agent import generate_proposal, agent_provider, agent_model_id
 from ..services.storage import get_storage
 from ..services.sns import is_sns_configured, get_sns_topic_arn, publish_alert, subscribe_email, SnsError
@@ -203,6 +204,7 @@ async def get_risk(
     mode: str = Query("live", pattern="^(live|replay)$"),
     date: Optional[str] = Query(None),
     synthetic: bool = Query(False),
+    as_of_hour: int = Query(0, ge=0, le=23),
 ):
     if mode == "replay" and not date and not synthetic:
         raise HTTPException(status_code=400, detail="date is required in replay mode (YYYY-MM-DD)")
@@ -213,7 +215,7 @@ async def get_risk(
             date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         assessments, w_start, w_end, provider, err = await _run_assessment(mode, date, use_synthetic=True)
     else:
-        assessments, w_start, w_end, provider, err = await _run_assessment(mode, date, use_synthetic=False)
+        assessments, w_start, w_end, provider, err = await _run_assessment(mode, date, use_synthetic=False, as_of_hour=as_of_hour if mode == "replay" else 0)
 
     return {
         "mode": mode,
@@ -225,6 +227,20 @@ async def get_risk(
         "provider_used": provider,
         "error": err,
     }
+
+
+# --- Ask Sentinel ---
+
+class AskBody(BaseModel):
+    question: str = Field(min_length=2, max_length=300)
+    # The assessment the dispatcher is looking at, as returned by /risk or /proposals.
+    assessments: list[SpotAssessment] = Field(default_factory=list, max_length=200)
+
+
+@router.post("/ask")
+async def ask_sentinel(body: AskBody):
+    """A Strands agent chooses which lookup answers the question; the answer text is computed from that lookup."""
+    return await ask(body.question.strip(), [a.model_dump(mode="json") for a in body.assessments])
 
 
 # --- Driver advisory ---
@@ -527,6 +543,13 @@ async def verify_proposal(proposal_id: str):
     date = proposal.get("date")
     w_start = proposal.get("window_start", "")
     w_end = proposal.get("window_end", "")
+
+    # The same window replayed again must not count twice or move the limits twice.
+    same_window = [r for r in storage.list_history()
+                   if r.get("assessment_window_start") == w_start and r.get("assessment_window_end") == w_end and r.get("outcome") != "pending"]
+    if same_window:
+        return {"proposal_id": proposal_id, "records": same_window, "already_counted": True,
+                "message": "this window was already checked; the earlier result stands and limits were not adjusted again"}
     assessments = proposal.get("assessments", [])
     observed_map = proposal.get("observed_map", {})
 

@@ -105,25 +105,33 @@ def describe_flag(a: SpotAssessment) -> str:
             f"{nice_time(a.peak_time)}, threshold {a.threshold_mm_hr} mm/hr)")
 
 
-HINDI_LEVEL = {RiskLevel.RED: "उच्च जोखिम", RiskLevel.AMBER: "सतर्कता"}
-HINDI_ACTION = {
-    RiskLevel.RED: "इन रास्तों से अभी वाहन न भेजें; डिस्पैचर की पुष्टि का इंतज़ार करें।",
-    RiskLevel.AMBER: "इन रास्तों पर वाहन भेजने से पहले स्थिति की जाँच करें।",
-}
+def action_for(a: SpotAssessment) -> str:
+    """The dispatch action for a flagged spot.
+
+    Backtesting showed most forecast flags are false alarms, so only rain that is already
+    falling justifies holding trips. A forecast flag asks for preparation and a check.
+    """
+    now = a.trigger == "recorded_rain"
+    if a.risk_level == RiskLevel.RED:
+        return ("Rain is already at this level. Hold trips through this spot now." if now
+                else "Heavy rain is forecast here. Plan an alternative and check conditions before each trip.")
+    return ("Rain is building here now. Check conditions before each trip." if now
+            else "Rain may approach this spot's limit. Check conditions before routing vehicles through it.")
 
 
 def hindi_summary(flagged: list[SpotAssessment]) -> str:
-    """Hindi list of flagged spots by level, with the action for each level. Place names stay as written."""
+    """Hindi list of flagged spots grouped by what the driver should do. Place names stay as written."""
     if not flagged:
         return "इस अवधि में किसी स्थान ने अनुमानित एहतियाती सीमा पार नहीं की।"
-    parts: list[str] = []
-    if any(a.trigger == "recorded_rain" for a in flagged):
-        parts.append("बारिश अभी हो रही है; यह चेतावनी दर्ज की गई बारिश पर आधारित है।")
-    for level in (RiskLevel.RED, RiskLevel.AMBER):
-        names = [a.spot_name for a in flagged if a.risk_level == level]
-        if names:
-            parts.append(f"{HINDI_LEVEL[level]} ({len(names)}): " + ", ".join(names) + "। " + HINDI_ACTION[level])
-    return " ".join(parts)
+    now_red = [a.spot_name for a in flagged if a.risk_level == RiskLevel.RED and a.trigger == "recorded_rain"]
+    forecast_red = [a.spot_name for a in flagged if a.risk_level == RiskLevel.RED and a.trigger != "recorded_rain"]
+    amber = [a.spot_name for a in flagged if a.risk_level == RiskLevel.AMBER]
+    groups = [
+        (now_red, "बारिश जारी, उच्च जोखिम", "इन रास्तों से अभी वाहन न भेजें।"),
+        (forecast_red, "भारी बारिश का पूर्वानुमान", "वैकल्पिक रास्ता तय रखें और हर फेरे से पहले स्थिति जाँचें।"),
+        (amber, "सतर्कता", "इन रास्तों पर वाहन भेजने से पहले स्थिति की जाँच करें।"),
+    ]
+    return " ".join(f"{title} ({len(names)}): " + ", ".join(names) + "। " + action for names, title, action in groups if names)
 
 
 def _get_hint(spot_id: str) -> str:
@@ -273,7 +281,7 @@ def build_fallback_proposal(
             "risk_level": a.risk_level.value,
             "peak_mm_hr": a.peak_precipitation_mm_hr,
             "peak_time": a.peak_time or window_start,
-            "recommended_action": _get_hint(a.spot_id) + " — Dispatcher review required.",
+            "recommended_action": action_for(a),
         })
 
     return {

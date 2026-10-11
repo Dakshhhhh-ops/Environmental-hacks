@@ -49,6 +49,8 @@ flowchart LR
 | Forecast flags raised | 160 |
 | Of those, false alarms (recorded peak under 60% of the limit) | 102 |
 
+By season: 2024 caught 22 of 82 events with 13 of 60 flags false; 2025 caught 2 of 20 with 89 of 100 flags false.
+
 A day-ahead forecast alone misses about three in four of these events, and most of the flags it raises are false alarms. That is why the app also flags on rain already recorded: it reacts within the hour rather than predicting, but it does not miss a downpour that is happening. Only 9 of the 78 missed events had watch-level rain in an earlier hour, so this second signal gives little advance warning. It is a safety net, not a forecast.
 
 Read these numbers with their limits: "recorded rain" is a weather-model analysis from Open-Meteo's archive, not a rain gauge; the limits are unverified estimates; and nothing here measures flooding.
@@ -78,6 +80,13 @@ Verification classifies each spot: flagged and recorded peak at least 60% of the
 - Any failure falls back to a template, labelled as such, with the reason shown.
 
 Each alert stores an `agent_trace` (framework, provider, model, tools called) that the dashboard displays. `AGENT_PROVIDER=ollama` (default) uses a local model; `AGENT_PROVIDER=bedrock` runs the same agent on Amazon Bedrock.
+
+## Ask Sentinel, timeline and actions
+
+- **Ask Sentinel** ([`ask.py`](backend/app/services/ask.py)): the dispatcher asks a question in plain words. A Strands agent chooses one of four read-only lookups (network, zone, spot, route) and its arguments; the answer text is composed by code from that lookup. In testing, a small local model chose the right lookup but described numbers loosely, so its own sentences are not shown. If the agent does not choose, the question is matched by keywords and labelled as such.
+- **Replay timeline**: after a replay, drag the hour slider or press play to watch the day unfold on the map and in 3D.
+- **Actions follow the signal**: only rain that is already falling tells drivers to hold trips. A forecast flag asks them to plan an alternative and check first, because most forecast flags in the backtest were false alarms.
+- **What did not work**: eight weather models, an any-model rule, lower forecast cut-offs, daily rain totals and convective energy (CAPE) were each tried as a better day-ahead predictor. None held up in 2025: every variant that caught more events was wrong 83 to 92% of the time. They are not in the app.
 
 ## Route check and 3D view
 
@@ -113,13 +122,13 @@ For agent-drafted alerts, install [Ollama](https://ollama.com), start it, and pu
 
 ## Tests
 
-`python -m pytest -q` runs 33 tests covering the risk rules, the recorded-rain trigger, replay source selection, batched weather requests, agent reply parsing and guardrails, the Hindi summary, calibration, route scoring, storage, approval and rejection, and the driver advisory. External services are stubbed, so passing tests do not prove Open-Meteo, Ollama, OSRM or AWS are available.
+`python -m pytest -q` runs 38 tests covering the risk rules, the recorded-rain trigger, replay source selection, batched weather requests, agent reply parsing and guardrails, the Hindi summary, calibration, route scoring, storage, approval and rejection, and the driver advisory. External services are stubbed, so passing tests do not prove Open-Meteo, Ollama, OSRM or AWS are available.
 
 **What was actually run (2026-10-11):**
 
-- 33 tests passed.
+- 38 tests passed.
 - `scripts/backtest.py` ran against the live Open-Meteo APIs and produced the numbers above.
-- A scripted click-through in headless Chrome, against a live local server with real weather data and the Strands agent on Ollama (`qwen3-vl:2b-instruct`), passed 14 steps with no console errors: hero replay of the cloudburst, language switch, day-ahead replay, route check, approve, verify, track record, reject, 3D view with drag, live assessment, table filter, driver advisory in both languages, and a 390 px phone layout with no sideways scroll.
+- A scripted click-through in headless Chrome, against a live local server with real weather data and the Strands agent on Ollama (`qwen3-vl:2b-instruct`), passed 16 steps with no console errors (run before the Ask tab was added to the page; the Ask endpoint was checked separately against the live agent): hero replay of the cloudburst, language switch, day-ahead replay, route check, approve, verify, track record, reject, 3D view with drag, live assessment, table filter, the replay timeline, forecast-versus-rain-now actions, driver advisory in both languages, and a 390 px phone layout with no sideways scroll.
 - Not run: `sam build`, any AWS deployment, the Bedrock provider (the local AWS credentials were rejected), SNS delivery, and DynamoDB storage.
 
 ## Deploying to AWS (untested)

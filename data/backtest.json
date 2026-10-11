@@ -14,6 +14,20 @@
   "false_alarms": 102,
   "forecast_flags": 160,
   "missed_with_earlier_watch_level_rain": 9,
+  "by_season": {
+    "2024": {
+      "events": 82,
+      "caught_by_forecast": 22,
+      "forecast_flags": 60,
+      "false_alarms": 13
+    },
+    "2025": {
+      "events": 20,
+      "caught_by_forecast": 2,
+      "forecast_flags": 100,
+      "false_alarms": 89
+    }
+  },
   "worst_event": {
     "date": "2024-07-31",
     "spot": "Mathura Road (Ashram)",

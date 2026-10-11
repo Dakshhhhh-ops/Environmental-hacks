@@ -3,7 +3,7 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const state = {
   mode: 'live', synthetic: false, spots: [], places: [], assessments: [], proposal: null, history: [],
-  map: null, scene: null, markers: {}, routeLayers: [], routes: null, selectedRoute: 0, lang: 'english', filter: 'all',
+  map: null, scene: null, scrubHour: null, playTimer: null, markers: {}, routeLayers: [], routes: null, selectedRoute: 0, lang: 'english', filter: 'all',
 };
 const COLORS = { green: '#54d6a0', amber: '#f2b94b', red: '#ff6570', idle: '#5c6e7c', blue: '#9fd8ff' };
 const LABELS = { green: 'LOW', amber: 'WATCH', red: 'HIGH' };
@@ -110,7 +110,7 @@ function renderAll() { renderMarkers(); renderKpis(); renderTable(); if (state.s
 async function setView(view) {
   const is3d = view === '3d';
   if (is3d && !state.scene) {
-    try { const { createScene } = await import('./scene3d.js?v=11'); state.scene = createScene($('#scene3d')); }
+    try { const { createScene } = await import('./scene3d.js?v=13'); state.scene = createScene($('#scene3d')); }
     catch (e) { toast('3D view could not load on this device.'); return; }
   }
   $('#scene3d').hidden = !is3d; $('#sceneHint').hidden = !is3d; $('.map-wrap').classList.toggle('is3d', is3d);
@@ -175,7 +175,8 @@ function renderProposal() {
   const verifiable = p.mode === 'replay' && ['replay_day_ahead_forecast', 'replay_historical_forecast'].includes(source);
   const canVerify = p.status === 'published' && verifiable;
   const noVerifyNote = p.status === 'published' && p.mode === 'replay' && !verifiable ? '<div class="delivery">This run has no genuine earlier forecast, so it cannot be checked against recorded rain.</div>' : '';
-  $('#proposalArea').innerHTML = `<div class="proposal-card">
+  const stale = state.scrubHour != null && state.scrubHour !== (p.as_of_hour ?? 0) ? `<div class="stale"><span>The map shows ${pad2(state.scrubHour)}:00. This draft was written for ${pad2(p.as_of_hour ?? 0)}:00.</span><button id="redraftBtn">Draft alert for ${pad2(state.scrubHour)}:00</button></div>` : '';
+  $('#proposalArea').innerHTML = `<div class="proposal-card">${stale}
     <div class="proposal-status"><span class="badge ${esc(p.status)}">${esc(p.status === 'pending' ? 'AWAITING YOUR DECISION' : p.status.toUpperCase())}</span><span class="badge ${agent ? 'agent' : 'fallback'}">${agent ? 'AI AGENT DRAFT' : noFlags ? 'ALL CLEAR' : 'TEMPLATE'}</span></div>
     <h2>Draft alert for ${esc(niceDate(p.window_start))}, ${hhmm(p.window_start)}–${hhmm(p.window_end)}</h2>
     <div class="lang-tabs"><button class="${state.lang === 'english' ? 'active' : ''}" data-lang="english">English</button><button class="${state.lang === 'hindi' ? 'active' : ''}" data-lang="hindi">हिन्दी</button></div>
@@ -189,11 +190,12 @@ function renderProposal() {
   $('#rejectBtn').onclick = () => transition('reject');
   if ($('#verifyBtn')) $('#verifyBtn').onclick = () => transition('verify');
   $('#toRouteBtn').onclick = () => showTab('route');
+  if ($('#redraftBtn')) $('#redraftBtn').onclick = () => { $('#hourSel').value = String(state.scrubHour); setMode('replay'); runAssessment(); };
 }
 async function transition(action) {
   try {
     const result = await request(`/proposals/${encodeURIComponent(state.proposal.id)}/${action}`, { method: 'POST' });
-    if (action === 'verify') { state.proposal.verified = true; await loadHistory(); toast('Compared with recorded rain. See Track record.'); }
+    if (action === 'verify') { state.proposal.verified = true; await loadHistory(); toast(result.already_counted ? 'This day and hour was already checked. The earlier result stands.' : 'Compared with recorded rain. See Track record.'); }
     else { Object.assign(state.proposal, result); toast(action === 'approve' ? 'Alert approved and published to the driver advisory page.' : 'Draft rejected. Nothing was published.'); }
     renderProposal();
   } catch (e) { toast(e.message); }
@@ -213,6 +215,7 @@ async function runAssessment() {
     const nowCount = state.assessments.filter(recorded).length;
     $('#mapTitle').textContent = flaggedCount ? `${flaggedCount} low point${flaggedCount > 1 ? 's' : ''} need attention${nowCount ? ` · rain already falling at ${nowCount}` : ''}` : 'No low point reached watch level';
     $('#windowLabel').textContent = `${SOURCES[state.assessments[0]?.data_source] || 'Assessment'} · ${niceDate(result.window_start)} ${hhmm(result.window_start)}–${hhmm(result.window_end)} IST`;
+    stopPlay(); state.scrubHour = null; showTimeline();
     renderAll(); renderProposal(); showTab('brief');
     const flagged = state.assessments.filter((a) => a.data_available && a.risk_level !== 'green').map((a) => state.markers[a.spot_id]?.getLatLng()).filter(Boolean);
     if (flagged.length > 1) state.map.fitBounds(L.latLngBounds(flagged).pad(0.25));
@@ -222,6 +225,39 @@ async function runAssessment() {
     $('#drillBtn').onclick = () => { setMode('replay', true); runAssessment(); };
     toast(e.message);
   } finally { busy(null); btn.disabled = false; }
+}
+
+/* ---------- replay timeline ---------- */
+const pad2 = (n) => String(n).padStart(2, '0');
+function stopPlay() { clearInterval(state.playTimer); state.playTimer = null; $('#playBtn').textContent = '▶ Play the day'; }
+function showTimeline() {
+  const p = state.proposal;
+  const on = !!p && p.mode === 'replay' && !state.synthetic;
+  $('#timeline').hidden = !on;
+  if (!on) { stopPlay(); state.scrubHour = null; return; }
+  $('#hourRange').value = p.as_of_hour ?? 0; $('#timelineHour').textContent = `${pad2(p.as_of_hour ?? 0)}:00`;
+  $('#timelineNote').textContent = 'Drag or press play to see how the day unfolded';
+}
+async function scrubTo(hour) {
+  const p = state.proposal; if (!p) return;
+  try {
+    const r = await request(`/risk?mode=replay&date=${encodeURIComponent(p.date)}&as_of_hour=${hour}`);
+    if (Number($('#hourRange').value) !== hour) return;   // a newer drag superseded this response
+    state.scrubHour = hour; state.assessments = r.spots || []; state.routes = null; clearRoutes(); $('#routeResult').innerHTML = '';
+    const flagged = state.assessments.filter((a) => a.data_available && a.risk_level !== 'green'), now = flagged.filter(recorded);
+    $('#timelineHour').textContent = `${pad2(hour)}:00`;
+    $('#timelineNote').textContent = flagged.length ? `${flagged.length} flagged${now.length ? `, ${now.length} from rain already falling` : ', all from the forecast'}` : 'Nothing flagged at this hour';
+    $('#mapTitle').textContent = flagged.length ? `${flagged.length} low point${flagged.length > 1 ? 's' : ''} need attention${now.length ? ` · rain already falling at ${now.length}` : ''}` : 'No low point reached watch level';
+    $('#windowLabel').textContent = `${SOURCES[state.assessments[0]?.data_source] || 'Replay'} · ${niceDate(r.assessment_window_start)} ${hhmm(r.assessment_window_start)}–${hhmm(r.assessment_window_end)} IST`;
+    renderAll(); renderProposal();
+  } catch (e) { stopPlay(); toast(e.message); }
+}
+function togglePlay() {
+  if (state.playTimer) return stopPlay();
+  let hour = Number($('#hourRange').value); if (hour >= 23) hour = -1;
+  $('#playBtn').textContent = '❚❚ Pause';
+  const tick = () => { hour += 1; $('#hourRange').value = hour; scrubTo(hour); if (hour >= 23) stopPlay(); };
+  tick(); state.playTimer = setInterval(tick, 900);
 }
 
 /* ---------- route check ---------- */
@@ -270,6 +306,26 @@ async function checkRoute() {
   finally { btn.disabled = false; btn.textContent = 'Check route'; }
 }
 
+/* ---------- ask ---------- */
+async function askSentinel(question) {
+  const q = question.trim(); if (!q) return;
+  const log = $('#askLog');
+  log.insertAdjacentHTML('beforeend', `<div class="ask-q">${esc(q)}</div><div class="ask-a thinking" id="askPending">Looking that up…</div>`);
+  $('#askPending').scrollIntoView({ block: 'nearest' });
+  $('#askInput').value = ''; $('#askBtn').disabled = true;
+  let html;
+  try {
+    const r = await request('/ask', { method: 'POST', body: JSON.stringify({ question: q, assessments: state.assessments }) });
+    const how = r.routed_by === 'agent' ? `Strands agent chose <code>${esc((r.agent_trace.tools_called || [])[0] || '')}</code> · answer computed from the assessment`
+      : r.routed_by === 'keywords' ? `Matched by keywords to <code>${esc((r.agent_trace.tools_called || [])[0] || '')}</code> · ${esc(r.reason || '')}` : esc(r.reason || '');
+    html = `${esc(r.answer)}<small>${how}</small>`;
+    if (r.route) { $('#fromSel').value = r.route.from_id; $('#toSel').value = r.route.to_id; checkRoute(); }
+    else if (r.spot_id && state.markers[r.spot_id] && $('#scene3d').hidden) { state.map.setView(state.markers[r.spot_id].getLatLng(), 13); state.markers[r.spot_id].openPopup(); }
+  } catch (e) { html = `Could not answer: ${esc(e.message)}`; }
+  const pending = $('#askPending'); pending.classList.remove('thinking'); pending.removeAttribute('id'); pending.innerHTML = html;
+  pending.scrollIntoView({ block: 'nearest' }); $('#askBtn').disabled = false;
+}
+
 /* ---------- history ---------- */
 async function loadHistory() {
   try { state.history = (await request('/history')).records || []; } catch { state.history = []; }
@@ -290,6 +346,8 @@ async function loadBacktest() {
       <div class="bar"><i style="width:${pct(b.caught_by_forecast, b.events)}%;background:${COLORS.green}"></i><i style="width:${pct(b.missed_by_forecast, b.events)}%;background:${COLORS.red}"></i></div>
       <p>Of <b>${b.events}</b> heavy-rain events in the 2024 and 2025 monsoons, the day-ahead forecast flagged <b>${pct(b.caught_by_forecast, b.events)}%</b> in advance. The rest are only caught once rain is already falling, which is why Sentinel watches both.</p>
       <p>The forecast raised <b>${b.forecast_flags}</b> flags and <b>${b.false_alarms}</b> were false alarms. Worst miss: ${esc(b.worst_event.spot)} on ${esc(niceDate(b.worst_event.date))}, ${b.worst_event.recorded_mm_hr} mm/hr recorded against ${b.worst_event.forecast_mm_hr} forecast.</p>
+      ${b.by_season ? `<p>By season: ${Object.entries(b.by_season).map(([y, s]) => `<b>${y}</b> caught ${s.caught_by_forecast} of ${s.events}, ${s.false_alarms} of ${s.forecast_flags} flags false`).join(' · ')}.</p>` : ''}
+      <p>Because of this, only rain that is already falling tells drivers to stop. A forecast flag asks them to plan an alternative and check first.</p>
       <p>Recorded rain is a weather-model analysis, not a rain gauge. Limits are unverified estimates. Flooding is not measured.</p>`;
   } catch { $('#backtest').hidden = true; }
 }
@@ -297,7 +355,7 @@ async function loadBacktest() {
 /* ---------- wiring ---------- */
 function showTab(name) {
   $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
-  $('#briefView').hidden = name !== 'brief'; $('#routeView').hidden = name !== 'route'; $('#historyView').hidden = name !== 'history';
+  $('#briefView').hidden = name !== 'brief'; $('#routeView').hidden = name !== 'route'; $('#askView').hidden = name !== 'ask'; $('#historyView').hidden = name !== 'history';
   if (name === 'history') loadHistory();
 }
 function setMode(mode, synthetic = false) {
@@ -316,6 +374,9 @@ async function start() {
   $('#hourSel').innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}">as of ${String(h).padStart(2, '0')}:00</option>`).join('');
   initMap(); setMode('live'); renderProposal(); motion();
   $('#view2d').onclick = () => setView('2d'); $('#view3d').onclick = () => setView('3d');
+  $('#askForm').onsubmit = (e) => { e.preventDefault(); askSentinel($('#askInput').value); };
+  $$('[data-ask]').forEach((c) => { c.onclick = () => askSentinel(c.dataset.ask); });
+  $('#playBtn').onclick = togglePlay; $('#hourRange').oninput = () => { stopPlay(); $('#timelineHour').textContent = `${pad2($('#hourRange').value)}:00`; scrubTo(Number($('#hourRange').value)); };
   $('#dateInput').max = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   $('#dateInput').onchange = () => setMode('replay');
   $('#liveBtn').onclick = () => setMode('live'); $('#replayBtn').onclick = () => setMode('replay');

@@ -53,8 +53,10 @@ def main() -> None:
     days_with_event: set[str] = set()
     days_total: set[str] = set()
     worst = {"date": None, "spot": None, "recorded_mm_hr": 0.0, "forecast_mm_hr": 0.0}
+    by_season: dict[str, dict] = {}
 
     for start, end in SEASONS:
+        season = by_season.setdefault(start[:4], {"events": 0, "caught_by_forecast": 0, "forecast_flags": 0, "false_alarms": 0})
         forecast = fetch(PREVIOUS_RUNS_URL, spots, start, end, "precipitation_previous_day1")
         recorded = fetch(ARCHIVE_URL, spots, start, end, "precipitation")
         for spot, f, r in zip(spots, forecast, recorded):
@@ -70,11 +72,15 @@ def main() -> None:
                 flagged = max(fc) >= WATCH_RATIO * threshold
                 event = max(ob) >= threshold
                 totals["forecast_flags"] += flagged
+                season["forecast_flags"] += flagged
                 if flagged and max(ob) < WATCH_RATIO * threshold:
                     totals["false_alarms"] += 1
+                    season["false_alarms"] += 1
                 if not event:
                     continue
                 totals["events"] += 1
+                season["events"] += 1
+                season["caught_by_forecast"] += flagged
                 days_with_event.add(day)
                 if max(ob) > worst["recorded_mm_hr"]:
                     worst = {"date": day, "spot": spot["name"], "recorded_mm_hr": max(ob), "forecast_mm_hr": max(fc)}
@@ -93,6 +99,7 @@ def main() -> None:
         "days": len(days_total),
         "days_with_any_event": len(days_with_event),
         **totals,
+        "by_season": by_season,
         "worst_event": worst,
         "method": ("A spot-day is flagged when the day-ahead forecast peak reaches 60% of the spot's threshold. "
                    "An event is a recorded hourly peak at or above the threshold. A false alarm is a flag on a day "

@@ -1,7 +1,7 @@
 """Strands Agents SDK briefing agent — drafts the dispatcher proposal.
 
 The agent reads the computed assessment through tools and writes only prose:
-an English briefing, the reasoning, and one action per flagged spot. Every
+an English briefing and its reasoning. Every
 number, risk level, spot id, and timestamp in the stored proposal is copied
 from the deterministic assessment, never from model output. The Hindi text is
 the vetted template unless a Bedrock model is configured, because small local
@@ -18,7 +18,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from ..models import RiskLevel, SpotAssessment
-from .bedrock import _build_flagged_payload, build_fallback_proposal, describe_flag, validate_proposal_json
+from .bedrock import _build_flagged_payload, action_for, build_fallback_proposal, describe_flag, validate_proposal_json
 from .storage import get_storage
 
 
@@ -27,7 +27,6 @@ First call get_flagged_spots. Then call get_calibration_history for the worst on
 Then reply in exactly this format and nothing else:
 SUMMARY: <2-3 plain English sentences: how many spots are high risk and how many are on watch, then the worst two or three by spot_name>
 REASONING: <1-2 sentences on why they were flagged and how past alerts for them performed>
-ACTION <spot_id>: <one short action>   (one line for each spot in worst_spots)
 
 Rules:
 - In SUMMARY and REASONING write the spot_name, never the spot_id.
@@ -35,7 +34,7 @@ Rules:
 - Rainfall is a proxy for possible waterlogging, not a confirmed flood. Never say a place is flooded, under water, or has high water levels: you only know about rain.
 - If high_risk_from_recorded_rain or watch_from_recorded_rain is above zero, say first that rain is already falling and the forecast did not predict it.
 - Each spot has a "status" field. Repeat it as given: amber means the forecast peak is close to but still below the threshold; red means it reached or passed the threshold.
-- Actions are for vehicle dispatch only. For a red spot: hold trips through it until a dispatcher confirms conditions. For an amber spot: check conditions before routing vehicles through it. Never order evacuations or emergency response, and never say a route is safe."""
+- Do not give instructions or actions; those are set by the rule engine. Never order evacuations and never say a route is safe."""
 
 DISCLAIMER = (
     "Rainfall intensity is a proxy for potential waterlogging, not a confirmed flood prediction. "
@@ -94,10 +93,7 @@ def makes_unsupported_claim(text: str) -> bool:
     return any(phrase in lowered for phrase in UNSUPPORTED_CLAIMS)
 
 
-DEFAULT_ACTIONS = {
-    RiskLevel.RED: "Hold trips through this spot until a dispatcher confirms conditions.",
-    RiskLevel.AMBER: "Check conditions before routing vehicles through this spot.",
-}
+FLAGGED_LEVELS = (RiskLevel.RED, RiskLevel.AMBER)
 
 
 def _status(a: SpotAssessment) -> str:
@@ -242,11 +238,7 @@ def _assemble(briefing: Briefing, assessments: list[SpotAssessment], window_star
                 "risk_level": a.risk_level.value,
                 "peak_mm_hr": a.peak_precipitation_mm_hr,
                 "peak_time": a.peak_time or window_start,
-                "recommended_action": (
-                    "Rain is already at this level. Hold trips through this spot now."
-                    if a.trigger == "recorded_rain" and a.risk_level == RiskLevel.RED
-                    else next((act for act in [briefing.actions.get(a.spot_id)] if act and not makes_unsupported_claim(act)), DEFAULT_ACTIONS[a.risk_level])
-                ),
+                "recommended_action": action_for(a),
             }
             for a in flagged_a
         ],
@@ -268,7 +260,7 @@ async def generate_proposal(
     generated_by is 'strands-agent' or 'fallback'.
     """
     flagged = _build_flagged_payload(assessments)
-    status = {a.spot_id: _status(a) for a in assessments if a.risk_level in DEFAULT_ACTIONS}
+    status = {a.spot_id: _status(a) for a in assessments if a.risk_level in FLAGGED_LEVELS}
     for f in flagged:
         f["status"] = status[f["spot_id"]]
         f.pop("alternate_route_hint", None)

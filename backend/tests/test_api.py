@@ -160,3 +160,56 @@ def test_driver_advisory_shows_only_approved_alerts(tmp_path, monkeypatch):
     advisory = client.get("/api/advisory").json()
     assert advisory["active"] and advisory["kind"] == "drill"
     assert len(advisory["flagged"]) == len(proposal["flagged_spots"]) and advisory["flagged"][0]["name"]
+
+
+def test_risk_endpoint_replays_a_day_hour_by_hour(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage_module.settings, "local_data_dir", str(tmp_path))
+    monkeypatch.setattr(storage_module, "_storage", None)
+    from backend.app.services import openmeteo
+    hours = [f"2024-07-31T{h:02d}:00" for h in range(24)]
+    async def fake_day(lat, lon, date, timeout):
+        return {"day_ahead": {"time": hours, "precipitation_previous_day1": [1.0] * 24}, "historical": None,
+                "archive": {"time": hours, "precipitation": [0.0] * 19 + [60.0] * 5}, "errors": []}
+    async def no_prefetch(*args, **kwargs):
+        return None
+    monkeypatch.setattr(openmeteo, "_fetch_day", fake_day)
+    monkeypatch.setattr(openmeteo, "_prefetch_days", no_prefetch)
+    client = TestClient(app)
+    morning = client.get("/api/risk?mode=replay&date=2024-07-31&as_of_hour=6").json()
+    evening = client.get("/api/risk?mode=replay&date=2024-07-31&as_of_hour=20").json()
+    assert all(s["risk_level"] == "green" for s in morning["spots"])
+    assert all(s["risk_level"] == "red" and s["trigger"] == "recorded_rain" for s in evening["spots"])
+    assert evening["assessment_window_start"] == "2024-07-31T20:00"
+    assert client.get("/api/risk?mode=replay&date=2024-07-31&as_of_hour=24").status_code == 422
+
+
+def test_same_window_verified_twice_counts_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage_module.settings, "local_data_dir", str(tmp_path))
+    monkeypatch.setattr(storage_module, "_storage", None)
+    monkeypatch.delenv("SNS_TOPIC_ARN", raising=False)
+    from backend.app.api import routes
+    from backend.app.services import openmeteo
+    from backend.app.services.bedrock import build_fallback_proposal
+    hours = [f"2025-08-14T{h:02d}:00" for h in range(24)]
+    async def fake_day(lat, lon, date, timeout):
+        return {"day_ahead": {"time": hours, "precipitation_previous_day1": [30.0] * 24}, "historical": None,
+                "archive": {"time": hours, "precipitation": [0.5] * 24}, "errors": []}
+    async def no_prefetch(*args, **kwargs):
+        return None
+    async def template(assessments, window_start, window_end, *args, **kwargs):
+        return build_fallback_proposal(assessments, window_start, window_end), "fallback", "test stub"
+    monkeypatch.setattr(openmeteo, "_fetch_day", fake_day)
+    monkeypatch.setattr(openmeteo, "_prefetch_days", no_prefetch)
+    monkeypatch.setattr(routes, "generate_proposal", template)
+    client = TestClient(app)
+    def replay_and_verify():
+        p = client.post("/api/proposals", json={"mode": "replay", "date": "2025-08-14"}).json()
+        client.post(f"/api/proposals/{p['id']}/approve")
+        return client.post(f"/api/proposals/{p['id']}/verify").json()
+    first = replay_and_verify()
+    assert all(r["outcome"] == "false_alarm" and r["threshold_adjusted"] for r in first["records"])
+    limits_after_first = {s["id"]: s["threshold_mm_hr"] for s in client.get("/api/spots").json()["spots"]}
+    second = replay_and_verify()
+    assert second.get("already_counted") is True
+    assert len(client.get("/api/history").json()["records"]) == SPOT_COUNT
+    assert {s["id"]: s["threshold_mm_hr"] for s in client.get("/api/spots").json()["spots"]} == limits_after_first

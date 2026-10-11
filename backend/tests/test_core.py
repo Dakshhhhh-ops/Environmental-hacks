@@ -213,7 +213,7 @@ def test_agent_claims_of_flooding_or_safety_are_replaced_with_computed_text():
     proposal = agent._assemble(briefing, assessments, "2025-07-09T00:00", "2025-07-09T11:00")
     assert "water level" not in proposal["english_text"] and "1 low point(s) are at high risk" in proposal["english_text"]
     assert "Agent note" not in proposal["reasoning"]
-    assert proposal["flagged_spots"][0]["recommended_action"] == agent.DEFAULT_ACTIONS[RiskLevel.RED]
+    assert proposal["flagged_spots"][0]["recommended_action"].startswith("Heavy rain is forecast here")
 
 
 def test_hindi_summary_groups_spots_by_level_and_notes_rain_already_falling():
@@ -222,5 +222,52 @@ def test_hindi_summary_groups_spots_by_level_and_notes_rain_already_falling():
     red = _assess_for_agent("a", 12.0, 18.4)
     amber = apply_recorded_rain(_assess_for_agent("b", 10.0, 1.0), [7.0], ["2025-07-09T05:00"])
     text = hindi_summary([red, amber])
-    assert "उच्च जोखिम (1): Spot a" in text and "सतर्कता (1): Spot b" in text and "बारिश अभी हो रही है" in text
+    assert "भारी बारिश का पूर्वानुमान (1): Spot a" in text and "सतर्कता (1): Spot b" in text
+    now = apply_recorded_rain(_assess_for_agent("c", 10.0, 1.0), [30.0], ["2025-07-09T05:00"])
+    assert "बारिश जारी, उच्च जोखिम (1): Spot c" in hindi_summary([now]) and "अभी वाहन न भेजें" in hindi_summary([now])
     assert hindi_summary([]).startswith("इस अवधि में")
+
+
+def test_only_rain_already_falling_tells_dispatchers_to_hold_trips():
+    from backend.app.services.bedrock import action_for
+    from backend.app.services.risk import apply_recorded_rain
+    forecast_red = _assess_for_agent("a", 12.0, 18.4)
+    now_red = apply_recorded_rain(_assess_for_agent("b", 10.0, 1.0), [30.0], ["2025-07-09T05:00"])
+    assert "Hold trips" not in action_for(forecast_red) and "Plan an alternative" in action_for(forecast_red)
+    assert "Hold trips through this spot now" in action_for(now_red)
+
+
+def _ask_assessments():
+    from backend.app.services.spots_loader import load_spots
+    out = []
+    for i, s in enumerate(load_spots()):
+        peak = s["threshold_mm_hr"] * (1.3 if s["id"] == "minto_road_bridge" else 0.7 if s["id"] == "moolchand_underpass" else 0.1)
+        ratio = peak / s["threshold_mm_hr"]
+        out.append({"spot_id": s["id"], "spot_name": s["name"], "threshold_mm_hr": s["threshold_mm_hr"], "peak_precipitation_mm_hr": round(peak, 1),
+                    "risk_ratio": ratio, "risk_level": "red" if ratio >= 1 else "amber" if ratio >= 0.6 else "green", "trigger": "forecast", "data_available": True})
+    return out
+
+
+def test_ask_answers_are_computed_from_the_assessment():
+    from backend.app.services.ask import Toolbox, keyword_route, summarize
+    box = Toolbox(_ask_assessments())
+    assert "1 low points are HIGH and 1 are on WATCH" in summarize(box.assessments)
+    spot = box.spot("Minto Road")
+    assert spot["spot_id"] == "minto_road_bridge" and "is HIGH" in spot["answer"] and "130%" in spot["answer"] and "Plan an alternative" in spot["answer"]
+    assert "not one of the" in box.spot("Chandni Chowk")["answer"]
+    assert "WATCH: Moolchand underpass" in box.zone("south")["answer"]
+    result, label = keyword_route("How is the Moolchand underpass doing?", box)
+    assert label.startswith("spot_status") and "is WATCH" in result["answer"]
+    assert keyword_route("what is going on", box)[1] == "network_status"
+    assert keyword_route("anything in North West Delhi?", box)[1] == "zone_status(North West)"
+
+
+def test_ask_falls_back_to_keywords_when_the_agent_is_unavailable(monkeypatch):
+    from backend.app.services import ask as ask_module
+    def boom(question, assessments):
+        raise RuntimeError("model offline")
+    monkeypatch.setattr(ask_module, "_run", boom)
+    result = asyncio.run(ask_module.ask("Is Minto Road okay?", _ask_assessments()))
+    assert result["routed_by"] == "keywords" and "model offline" in result["reason"] and "Minto Road railway bridge is HIGH" in result["answer"]
+    empty = asyncio.run(ask_module.ask("hello", []))
+    assert empty["routed_by"] == "none" and "Run an assessment first" in empty["answer"]

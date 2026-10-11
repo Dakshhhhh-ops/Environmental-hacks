@@ -7,12 +7,12 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0c0d'/%3E%3Crect x='8' y='8' width='10' height='10' fill='%237ff0c3'/%3E%3Crect x='16' y='16' width='8' height='8' fill='%23fff'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="styles.css?v=11">
+  <link rel="stylesheet" href="styles.css?v=13">
 </head>
 <body>
   <nav class="nav" id="nav">
     <a class="logo" href="#top">Sentinel<i></i></a>
-    <div class="nav-links"><a href="#how">How it works</a><a href="#app">Dashboard</a><a href="#app" data-goto="route">Route check</a><a href="#app" data-goto="history">Track record</a><a href="#locations">Locations</a><a href="advisory.html" target="_blank" rel="noopener">Driver view</a></div>
+    <div class="nav-links"><a href="#how">How it works</a><a href="#app">Dashboard</a><a href="#app" data-goto="route">Route check</a><a href="#app" data-goto="ask">Ask</a><a href="#app" data-goto="history">Track record</a><a href="#locations">Locations</a><a href="advisory.html" target="_blank" rel="noopener">Driver view</a></div>
     <div class="nav-cta"><button class="pill dark" id="navReplay">Replay a real storm</button><button class="pill mint" id="navOpen">Open dashboard</button></div>
   </nav>
 
@@ -79,6 +79,7 @@
         <div class="panel-tabs">
           <button class="tab active" data-tab="brief">BRIEFING</button>
           <button class="tab" data-tab="route">ROUTE CHECK</button>
+          <button class="tab" data-tab="ask">ASK</button>
           <button class="tab" data-tab="history">TRACK RECORD <span id="historyCount">0</span></button>
         </div>
 
@@ -100,6 +101,21 @@
           <div id="routeResult" class="route-result"></div>
         </section>
 
+        <section id="askView" class="view" hidden>
+          <div class="route-form">
+            <h2>Ask Sentinel</h2>
+            <p>Ask in your own words. An AI agent decides what to look up; the answer is computed from the current assessment, so the numbers are exact.</p>
+          </div>
+          <div class="ask-chips">
+            <button class="chip" data-ask="What is the overall situation?">Overall situation</button>
+            <button class="chip" data-ask="Is Minto Road okay?">Is Minto Road okay?</button>
+            <button class="chip" data-ask="Which spots in South Delhi should I worry about?">South Delhi</button>
+            <button class="chip" data-ask="Can I send an ambulance from AIIMS to LNJP Hospital?">AIIMS to LNJP</button>
+          </div>
+          <div id="askLog" class="ask-log"></div>
+          <form id="askForm" class="ask-form"><input id="askInput" type="text" maxlength="300" placeholder="e.g. Can I send a bus from Nizamuddin to DU North Campus?" aria-label="Your question"><button class="pill mint" id="askBtn">Ask</button></form>
+        </section>
+
         <section id="historyView" class="view" hidden>
           <div class="history-head"><h2>How past alerts held up</h2><p>Each alert is compared with the rain that was later recorded. Thresholds adjust after false alarms and misses. No flood observations are used.</p></div>
           <div id="historyStats" class="history-stats"></div>
@@ -107,6 +123,12 @@
           <div id="historyList" class="history-list"></div>
         </section>
       </aside>
+    </section>
+
+    <section class="timeline" id="timeline" hidden aria-label="Replay timeline">
+      <button id="playBtn" class="pill mint">▶ Play the day</button>
+      <div class="timeline-track"><input id="hourRange" type="range" min="0" max="23" step="1" value="0" aria-label="Hour of the replayed day"><div class="ticks"><span>00</span><span>06</span><span>12</span><span>18</span><span>23</span></div></div>
+      <div class="timeline-read"><b id="timelineHour">00:00</b><span id="timelineNote">Drag to see how the day unfolded</span></div>
     </section>
 
     <section class="locations" id="locations">
@@ -121,5 +143,5 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
-  <script src="config.js?v=11"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script type="module" src="app.js?v=11"></script>
+  <script src="config.js?v=13"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script type="module" src="app.js?v=13"></script>
 </body></html>
