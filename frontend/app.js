@@ -5,7 +5,7 @@ const state = {
   mode: 'live', synthetic: false, spots: [], places: [], assessments: [], proposal: null, history: [],
   map: null, markers: {}, routeLayers: [], routes: null, selectedRoute: 0, lang: 'english', filter: 'all',
 };
-const COLORS = { green: '#54d6a0', amber: '#f2b94b', red: '#ff6570', idle: '#5c6e7c', blue: '#66b9ea' };
+const COLORS = { green: '#54d6a0', amber: '#f2b94b', red: '#ff6570', idle: '#5c6e7c', blue: '#9fd8ff' };
 const LABELS = { green: 'LOW', amber: 'WATCH', red: 'HIGH' };
 const RANK = { red: 0, amber: 1, green: 2 };
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -110,7 +110,7 @@ function setSteps() {
   $('#steps').innerHTML = ['Forecast', 'Assess', 'Propose', 'Approve', 'Act', 'Verify'].map((v, i) => `<span class="${i < done ? 'done' : i === done ? 'current' : ''}">${i < done ? '✓' : String(i + 1).padStart(2, '0')} ${v}</span>`).join('');
 }
 function emptyBriefing(title, text, extra = '') {
-  $('#proposalArea').innerHTML = `<div class="empty"><h2>${esc(title)}</h2><p>${esc(text)}</p><button class="primary" id="emptyRun">Run assessment</button>${extra}</div>`;
+  $('#proposalArea').innerHTML = `<div class="empty"><h2>${esc(title)}</h2><p>${esc(text)}</p><button class="pill mint" id="emptyRun">Run assessment</button>${extra}</div>`;
   $('#emptyRun').onclick = () => runAssessment();
 }
 function renderProposal() {
@@ -167,7 +167,7 @@ async function runAssessment() {
     if (flagged.length > 1) state.map.fitBounds(L.latLngBounds(flagged).pad(0.25));
   } catch (e) {
     state.proposal = null; setSteps();
-    $('#proposalArea').innerHTML = `<div class="empty"><h2>Assessment could not run</h2><p>${esc(e.message)}</p><button class="primary" id="drillBtn">Run a storm drill instead</button></div>`;
+    $('#proposalArea').innerHTML = `<div class="empty"><h2>Assessment could not run</h2><p>${esc(e.message)}</p><button class="pill mint" id="drillBtn">Run a storm drill instead</button></div>`;
     $('#drillBtn').onclick = () => { setMode('replay', true); runAssessment(); };
     toast(e.message);
   } finally { busy(null); btn.disabled = false; }
@@ -181,10 +181,10 @@ function drawRoutes() {
   const r = state.routes; if (!r || !state.map) return;
   r.routes.forEach((route, i) => {
     if (i === state.selectedRoute) return;
-    state.routeLayers.push(L.polyline(route.path, { color: route.score ? COLORS.red : '#8a9cab', weight: 4, opacity: 0.55, dashArray: '6 8' }).addTo(state.map));
+    state.routeLayers.push(L.polyline(route.path, { color: route.score ? COLORS.red : '#8d979b', weight: 4, opacity: 0.55, dashArray: '6 8' }).addTo(state.map));
   });
   const sel = r.routes[state.selectedRoute];
-  state.routeLayers.push(L.polyline(sel.path, { color: '#07121d', weight: 9, opacity: 0.9 }).addTo(state.map));
+  state.routeLayers.push(L.polyline(sel.path, { color: '#0a0c0d', weight: 9, opacity: 0.9 }).addTo(state.map));
   const line = L.polyline(sel.path, { color: sel.score ? COLORS.amber : COLORS.blue, weight: 5 }).addTo(state.map);
   state.routeLayers.push(line, pin(sel.path[0], 'A').addTo(state.map), pin(sel.path[sel.path.length - 1], 'B').addTo(state.map));
   state.map.fitBounds(line.getBounds().pad(0.15));
@@ -257,6 +257,11 @@ async function start() {
   $('#runBtn').onclick = () => runAssessment(); $('#subscribeBtn').onclick = subscribe; $('#routeBtn').onclick = checkRoute;
   $('#swapBtn').onclick = () => { const a = $('#fromSel').value; $('#fromSel').value = $('#toSel').value; $('#toSel').value = a; };
   $$('.tab').forEach((t) => { t.onclick = () => showTab(t.dataset.tab); });
+  const toApp = () => $('#app').scrollIntoView({ behavior: 'smooth' });
+  const replayStorm = () => { $('#dateInput').value = '2023-07-09'; setMode('replay'); toApp(); runAssessment(); };
+  $('#navOpen').onclick = toApp; $('#heroOpen').onclick = toApp; $('#navReplay').onclick = replayStorm; $('#heroReplay').onclick = replayStorm;
+  $$('[data-goto]').forEach((a) => { a.addEventListener('click', () => showTab(a.dataset.goto)); });
+  const onScroll = () => $('#nav').classList.toggle('solid', window.scrollY > 40); window.addEventListener('scroll', onScroll, { passive: true }); onScroll();
   $$('[data-filter]').forEach((c) => { c.onclick = () => { state.filter = c.dataset.filter; $$('[data-filter]').forEach((x) => x.classList.toggle('active', x === c)); renderTable(); }; });
   try {
     const [health, spots, places] = await Promise.all([request('/health'), request('/spots'), request('/places')]);

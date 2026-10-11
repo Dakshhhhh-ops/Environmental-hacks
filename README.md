@@ -127,6 +127,10 @@ The **Route check** tab answers the question a dispatcher actually has: can I se
 
 Antigravity.
 
+## Credits
+
+Hero photo: "Delhi, India, Rain, Street at night" by Vyacheslav Argenberg, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), via Wikimedia Commons, resized. Map data and routing: OpenStreetMap contributors and OSRM. Weather: Open-Meteo.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
