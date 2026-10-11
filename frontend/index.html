@@ -6,7 +6,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
-  <link rel="stylesheet" href="styles.css?v=4">
+  <link rel="stylesheet" href="styles.css?v=7">
 </head>
 <body>
   <nav class="nav" id="nav">
@@ -17,6 +17,7 @@
 
   <header class="hero" id="top">
     <div class="hero-bg"></div>
+    <canvas class="hero-rain" id="heroRain" aria-hidden="true"></canvas>
     <div class="hero-copy">
       <h1>Know which underpass floods.<br>Before the bus leaves.</h1>
       <p>Sentinel watches the rain forecast over 26 Delhi low points, drafts the alert with an AI agent, and tells dispatchers which route to send.</p>
@@ -60,6 +61,9 @@
 
     <section class="workspace">
       <div class="map-wrap">
+        <div id="scene3d" class="scene3d" hidden></div>
+        <div class="view-toggle"><button id="view2d" class="active">Map</button><button id="view3d">3D view</button></div>
+        <div id="sceneHint" class="scene-hint" hidden>Taller pillar = more rain against that spot&#39;s limit. Past the white ring = high risk. Labels show % of limit. Drag to rotate.</div>
         <div id="map" role="application" aria-label="Map of Delhi waterlogging risk locations"></div>
         <div class="map-heading"><span class="eyebrow">DELHI · NETWORK OVERVIEW</span><h1 id="mapTitle">Rainfall risk monitor</h1><p id="windowLabel">No assessment yet. Choose live or replay, then run.</p></div>
         <div class="map-legend"><span><i class="dot green"></i>LOW</span><span><i class="dot amber"></i>WATCH</span><span><i class="dot red"></i>HIGH</span><span><i class="line rec"></i>SUGGESTED ROUTE</span></div>
@@ -111,5 +115,6 @@
   <footer class="foot"><span class="logo">Sentinel<i></i></span><p>Decision support prototype. Rainfall is a proxy for waterlogging, thresholds and coordinates are unverified estimates, and this is not a flood prediction or emergency service.</p><p>Weather: Open-Meteo · Routes and map: OpenStreetMap, OSRM · Agent: Strands Agents SDK</p></footer>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="config.js?v=4"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script type="module" src="app.js?v=4"></script>
+  <script type="importmap">{"imports":{"three":"https://unpkg.com/three@0.160.0/build/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/"}}</script>
+  <script src="config.js?v=7"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script type="module" src="app.js?v=7"></script>
 </body></html>

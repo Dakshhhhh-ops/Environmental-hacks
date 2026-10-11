@@ -3,7 +3,7 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 const state = {
   mode: 'live', synthetic: false, spots: [], places: [], assessments: [], proposal: null, history: [],
-  map: null, markers: {}, routeLayers: [], routes: null, selectedRoute: 0, lang: 'english', filter: 'all',
+  map: null, scene: null, markers: {}, routeLayers: [], routes: null, selectedRoute: 0, lang: 'english', filter: 'all',
 };
 const COLORS = { green: '#54d6a0', amber: '#f2b94b', red: '#ff6570', idle: '#5c6e7c', blue: '#9fd8ff' };
 const LABELS = { green: 'LOW', amber: 'WATCH', red: 'HIGH' };
@@ -98,7 +98,46 @@ function renderTable() {
   }).join('') || `<tr><td colspan="6" class="loading">${state.filter === 'flagged' ? 'No flagged locations in this assessment.' : 'No locations available.'}</td></tr>`;
   $$('#spotRows tr[data-id]').forEach((tr) => { tr.onclick = () => focusSpot(tr.dataset.id); tr.onkeydown = (e) => { if (e.key === 'Enter') focusSpot(tr.dataset.id); }; });
 }
-function renderAll() { renderMarkers(); renderKpis(); renderTable(); }
+function renderAll() { renderMarkers(); renderKpis(); renderTable(); if (state.scene) state.scene.setData(state.spots, state.assessments); }
+
+/* ---------- 3D view and motion ---------- */
+async function setView(view) {
+  const is3d = view === '3d';
+  if (is3d && !state.scene) {
+    try { const { createScene } = await import('./scene3d.js?v=7'); state.scene = createScene($('#scene3d')); }
+    catch (e) { toast('3D view could not load on this device.'); return; }
+  }
+  $('#scene3d').hidden = !is3d; $('#sceneHint').hidden = !is3d; $('.map-wrap').classList.toggle('is3d', is3d);
+  $('#view3d').classList.toggle('active', is3d); $('#view2d').classList.toggle('active', !is3d);
+  if (is3d) { state.scene.setData(state.spots, state.assessments); state.scene.start(); } else if (state.scene) state.scene.stop();
+}
+function heroRain() {
+  const canvas = $('#heroRain');
+  if (!canvas || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const ctx = canvas.getContext('2d');
+  let drops = [], w = 0, h = 0;
+  const size = () => { w = canvas.width = canvas.offsetWidth; h = canvas.height = canvas.offsetHeight; drops = Array.from({ length: Math.round(w / 7) }, () => ({ x: Math.random() * w, y: Math.random() * h, l: 10 + Math.random() * 22, v: 9 + Math.random() * 10 })); };
+  size(); window.addEventListener('resize', size);
+  const tick = () => {
+    if (canvas.getBoundingClientRect().bottom > 0) {
+      ctx.clearRect(0, 0, w, h); ctx.strokeStyle = 'rgba(200,225,255,.28)'; ctx.lineWidth = 1; ctx.beginPath();
+      drops.forEach((d) => { ctx.moveTo(d.x, d.y); ctx.lineTo(d.x - d.l * 0.18, d.y + d.l); d.y += d.v; d.x -= d.v * 0.18; if (d.y > h) { d.y = -d.l; d.x = Math.random() * (w + 80); } });
+      ctx.stroke();
+    }
+    requestAnimationFrame(tick);
+  };
+  tick();
+}
+function motion() {
+  heroRain();
+  $$('.kpi').forEach((card) => {
+    card.addEventListener('mousemove', (e) => { const r = card.getBoundingClientRect(); const x = (e.clientX - r.left) / r.width - 0.5, y = (e.clientY - r.top) / r.height - 0.5; card.style.transform = `perspective(700px) rotateY(${x * 14}deg) rotateX(${-y * 14}deg) translateY(-3px)`; });
+    card.addEventListener('mouseleave', () => { card.style.transform = ''; });
+  });
+  if (!('IntersectionObserver' in window)) return;
+  const io = new IntersectionObserver((entries) => entries.forEach((en) => { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } }), { threshold: 0.12 });
+  $$('.lede, .how-grid article, .kpi, .map-wrap, .side-panel, .locations').forEach((el, i) => { el.classList.add('reveal'); el.style.transitionDelay = `${(i % 5) * 70}ms`; io.observe(el); });
+}
 
 /* ---------- briefing ---------- */
 function setSteps() {
@@ -249,7 +288,8 @@ async function subscribe() {
   catch (e) { $('#subscribeMsg').textContent = e.message; }
 }
 async function start() {
-  initMap(); setMode('live'); renderProposal();
+  initMap(); setMode('live'); renderProposal(); motion();
+  $('#view2d').onclick = () => setView('2d'); $('#view3d').onclick = () => setView('3d');
   $('#dateInput').max = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   $('#dateInput').onchange = () => setMode('replay');
   $('#liveBtn').onclick = () => setMode('live'); $('#replayBtn').onclick = () => setMode('replay');
@@ -276,6 +316,7 @@ async function start() {
     return;
   }
   const q = new URLSearchParams(location.search);
+  if (q.get('view') === '3d') await setView('3d');
   if (q.get('replay')) { if (q.get('replay') === 'drill') setMode('replay', true); else { $('#dateInput').value = q.get('replay'); setMode('replay'); } await runAssessment(); if (q.get('route')) { showTab('route'); await checkRoute(); } }
 }
 start();

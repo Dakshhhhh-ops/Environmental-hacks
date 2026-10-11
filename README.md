@@ -102,6 +102,10 @@ The frontend contains no AWS credentials. Do not put credentials in `frontend/co
 
 The **Route check** tab answers the question a dispatcher actually has: can I send this vehicle now? Pick an origin and destination (hospitals, stations, bus terminals, campuses). The backend asks the public OSRM service (OpenStreetMap data) for driving alternatives, measures how close each route passes to every flagged low point, and scores it (red 10, amber 3, within 300 m). The dashboard draws the routes, suggests the lowest-risk one, and says plainly when every route passes a flagged spot. "Clear of flagged spots" is not a claim that a road is dry. Code: [`backend/app/services/routing.py`](backend/app/services/routing.py).
 
+## 3D view
+
+The map panel has a **3D view** toggle (Three.js). Each low point is a pillar whose height is the forecast peak as a share of that spot's threshold; the white ring marks the threshold, so a pillar that passes its ring is high risk. Rain intensity in the scene follows the peak forecast. Code: [`frontend/scene3d.js`](frontend/scene3d.js).
+
 ## Three minute demo script
 
 1. Open the dashboard. Point out the 26 monitored low points, the KPI strip, and the unverified-estimates label.
