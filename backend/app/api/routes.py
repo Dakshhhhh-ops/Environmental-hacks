@@ -19,7 +19,7 @@ from ..models import (
 )
 from ..services.spots_loader import load_spots
 from ..services.risk import assess_spot
-from ..services.bedrock import generate_proposal
+from ..services.agent import generate_proposal, agent_provider, agent_model_id
 from ..services.storage import get_storage
 from ..services.sns import is_sns_configured, get_sns_topic_arn, publish_alert, subscribe_email, SnsError
 from ..services.verify import classify_outcome, adjust_threshold, _now_iso
@@ -77,6 +77,9 @@ async def health():
         "openmeteo_reachable": openmeteo_ok,
         "bedrock_model": os.environ.get("BEDROCK_MODEL_ID", settings.bedrock_model_id),
         "bedrock_region": os.environ.get("BEDROCK_REGION", settings.bedrock_region),
+        "agent_framework": "Strands Agents SDK",
+        "agent_provider": agent_provider(),
+        "agent_model": agent_model_id(),
         "timestamp": _now_iso(),
     }
 
@@ -240,7 +243,7 @@ async def create_proposal(body: ProposalCreateBody):
     # Determine data source label for proposal
     ds_label = assessments[0].data_source.value if assessments else "unknown"
 
-    # Generate proposal via Bedrock or fallback
+    # Draft the proposal with the Strands agent, or the labelled template fallback
     proposal_json, generated_by, fallback_reason = await generate_proposal(
         assessments, w_start, w_end, ds_label
     )
@@ -262,6 +265,7 @@ async def create_proposal(body: ProposalCreateBody):
         "status": "pending",
         "generated_by": generated_by,
         "fallback_reason": fallback_reason,
+        "agent_trace": proposal_json.get("agent_trace"),
         "english_text": proposal_json["english_text"],
         "hindi_text": proposal_json["hindi_text"],
         "reasoning": proposal_json["reasoning"],

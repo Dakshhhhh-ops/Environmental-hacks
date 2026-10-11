@@ -113,8 +113,9 @@ class Proposal(BaseModel):
 
     id: str
     status: str  # pending | approved | rejected | published
-    generated_by: str  # bedrock | fallback
+    generated_by: str  # strands-agent | fallback
     fallback_reason: Optional[str] = None
+    agent_trace: Optional[dict] = None
     english_text: str
     hindi_text: str
     reasoning: str
@@ -186,6 +187,9 @@ class HealthResponse(BaseModel):
     openmeteo_reachable: bool
     bedrock_model: Optional[str] = None
     bedrock_region: Optional[str] = None
+    agent_framework: Optional[str] = None
+    agent_provider: Optional[str] = None
+    agent_model: Optional[str] = None
     timestamp: str
 
 

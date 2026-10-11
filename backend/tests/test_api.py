@@ -34,7 +34,7 @@ def test_proposal_approval_rejection_and_local_skipped(tmp_path, monkeypatch):
     created = client.post("/api/proposals", json={"mode": "replay", "date": "2025-05-01", "synthetic": True})
     assert created.status_code == 200, created.text
     proposal = created.json()
-    assert proposal["generated_by"] in ("bedrock", "fallback")
+    assert proposal["generated_by"] in ("strands-agent", "fallback")
     assert len(proposal["assessments"]) == 8
     published = client.post(f"/api/proposals/{proposal['id']}/approve")
     assert published.status_code == 200

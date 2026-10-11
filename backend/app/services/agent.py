@@ -12,25 +12,27 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from ..models import RiskLevel, SpotAssessment
 from .bedrock import _build_flagged_payload, _get_hint, build_fallback_proposal, validate_proposal_json
 from .storage import get_storage
 
 
-SYSTEM_PROMPT = """You are a briefing assistant for a Delhi transport dispatcher who must decide whether to warn drivers about rain-related waterlogging at underpasses.
-
-Call get_flagged_spots to read the computed assessment. Call get_calibration_history for a flagged spot to see how past alerts for that spot compared with observed rainfall.
+SYSTEM_PROMPT = """You brief a Delhi transport dispatcher on rain-related waterlogging risk at underpasses.
+First call get_flagged_spots. Then call get_calibration_history once for each flagged spot.
+Then reply in exactly this format and nothing else:
+SUMMARY: <2-3 plain English sentences naming the flagged spots, worst first>
+REASONING: <1-2 sentences on why they were flagged and how past alerts for them performed>
+ACTION <spot_id>: <one short action>   (one line per flagged spot)
 
 Rules:
 - Use only values returned by the tools. Never invent rainfall values, risk levels, or locations.
-- Rainfall intensity is a proxy for potential waterlogging, not a confirmed flood. Say so.
-- Do not claim any alternate route is safe.
-- Write plain English a busy dispatcher can read in ten seconds.
-- Give exactly one short action for every flagged spot, using its spot_id."""
+- Rainfall is a proxy for possible waterlogging, not a confirmed flood.
+- Actions are for vehicle dispatch only. For a red spot: hold trips through it until a dispatcher confirms conditions. For an amber spot: check conditions before routing vehicles through it. Never order evacuations or emergency response, and never say a route is safe."""
 
 DISCLAIMER = (
     "Rainfall intensity is a proxy for potential waterlogging, not a confirmed flood prediction. "
@@ -39,18 +41,41 @@ DISCLAIMER = (
 )
 
 
-class SpotAction(BaseModel):
-    spot_id: str = Field(description="Exactly one of the flagged spot_id values")
-    recommended_action: str = Field(description="One short action for the dispatcher at this spot")
-
-
 class Briefing(BaseModel):
-    """Dispatcher briefing drafted from the computed assessment."""
+    """Prose parsed from the agent reply."""
 
-    english_summary: str = Field(description="2-4 sentence English briefing naming the flagged spots, worst first")
-    reasoning: str = Field(description="1-2 sentences on why these spots were flagged and how much to trust it")
-    actions: list[SpotAction] = Field(default_factory=list, description="One entry per flagged spot")
-    hindi_summary: Optional[str] = Field(default=None, description="Hindi translation of english_summary, if you can write fluent Hindi")
+    english_summary: str
+    reasoning: str = ""
+    actions: dict[str, str] = {}
+
+
+_LINE = re.compile(r"^[\s*#-]*(SUMMARY|REASONING|ACTION)[\s*]*([\w-]*)[\s*]*:\s*(.*)$", re.IGNORECASE)
+
+
+def parse_briefing(text: str, flagged_ids: set[str]) -> Briefing:
+    """Parse the SUMMARY / REASONING / ACTION lines; ignore actions for unknown spots."""
+    summary: list[str] = []
+    reasoning: list[str] = []
+    actions: dict[str, str] = {}
+    current: Optional[list[str]] = None
+    for line in text.splitlines():
+        m = _LINE.match(line)
+        if not m:
+            if current is not None and line.strip():
+                current.append(line.strip())
+            continue
+        kind, spot_id, rest = m.group(1).upper(), m.group(2), m.group(3).strip(" *")
+        if kind == "ACTION":
+            current = None
+            if spot_id in flagged_ids and rest and spot_id not in actions:
+                actions[spot_id] = rest
+        else:
+            current = summary if kind == "SUMMARY" else reasoning
+            if rest:
+                current.append(rest)
+    if not summary:
+        raise ValueError("agent reply had no SUMMARY line")
+    return Briefing(english_summary=" ".join(summary), reasoning=" ".join(reasoning), actions=actions)
 
 
 def agent_provider() -> str:
@@ -70,12 +95,14 @@ def _build_model():
             model_id=agent_model_id(),
             region_name=os.environ.get("BEDROCK_REGION", "us-east-1"),
             temperature=0.2,
+            max_tokens=600,
         )
     from strands.models.ollama import OllamaModel
     return OllamaModel(
         host=os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434"),
         model_id=agent_model_id(),
         temperature=0.2,
+        max_tokens=600,
     )
 
 
@@ -134,24 +161,17 @@ def _run_agent(flagged: list[dict], window_start: str, window_end: str, data_sou
     )
     result = agent(
         f"Draft the dispatcher briefing for the window {window_start} to {window_end}. "
-        f"{len(flagged)} of {total} spots are flagged. Read the assessment with your tools first.",
-        structured_output_model=Briefing,
+        f"{len(flagged)} of {total} assessed spots are flagged."
     )
-    briefing = result.structured_output
-    if not isinstance(briefing, Briefing):
-        raise ValueError("agent returned no structured briefing")
-    return briefing, tools_called
-
-
-def _has_devanagari(text: Optional[str]) -> bool:
-    return bool(text) and sum("ऀ" <= ch <= "ॿ" for ch in text) >= 10
+    if "get_flagged_spots" not in tools_called:
+        raise ValueError("agent drafted a briefing without reading the assessment")
+    return parse_briefing(str(result), flagged_ids), tools_called
 
 
 def _assemble(briefing: Briefing, assessments: list[SpotAssessment], window_start: str, window_end: str) -> dict:
     """Merge agent prose with computed values. Numbers come from the assessment only."""
     template = build_fallback_proposal(assessments, window_start, window_end)
     flagged_a = [a for a in assessments if a.risk_level in (RiskLevel.AMBER, RiskLevel.RED)]
-    actions = {a.spot_id: a.recommended_action.strip() for a in briefing.actions if a.recommended_action.strip()}
 
     facts = "; ".join(
         f"{a.spot_name} ({a.risk_level.value}, peak {a.peak_precipitation_mm_hr} mm/hr at {a.peak_time}, threshold {a.threshold_mm_hr} mm/hr)"
@@ -162,10 +182,9 @@ def _assemble(briefing: Briefing, assessments: list[SpotAssessment], window_star
         raise ValueError("agent returned an empty briefing")
     english = f"{english}\n\nComputed values: {facts}.\n\n{DISCLAIMER}"
 
-    use_model_hindi = agent_provider() == "bedrock" and _has_devanagari(briefing.hindi_summary)
     proposal = {
         "english_text": english,
-        "hindi_text": briefing.hindi_summary.strip() if use_model_hindi else template["hindi_text"],
+        "hindi_text": template["hindi_text"],
         "reasoning": briefing.reasoning.strip() or template["reasoning"],
         "flagged_spots": [
             {
@@ -173,7 +192,7 @@ def _assemble(briefing: Briefing, assessments: list[SpotAssessment], window_star
                 "risk_level": a.risk_level.value,
                 "peak_mm_hr": a.peak_precipitation_mm_hr,
                 "peak_time": a.peak_time or window_start,
-                "recommended_action": actions.get(a.spot_id) or _get_hint(a.spot_id),
+                "recommended_action": briefing.actions.get(a.spot_id) or _get_hint(a.spot_id),
             }
             for a in flagged_a
         ],

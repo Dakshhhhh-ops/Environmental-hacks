@@ -86,3 +86,47 @@ def test_malformed_bedrock_response_uses_explicit_fallback(monkeypatch):
     assert generated_by == "fallback"
     assert reason.startswith("bedrock unavailable:")
     assert "Estimated Waterlogging Risk" in proposal["english_text"]
+
+
+def test_agent_reply_parsing_ignores_unknown_spots_and_keeps_computed_values():
+    from backend.app.services import agent
+    assessments = [_assess_for_agent("a", 12.0, 18.4), _assess_for_agent("b", 15.0, 3.0)]
+    reply = (
+        "**SUMMARY:** Spot a is red.\nIt needs review.\n"
+        "REASONING: Peak 99 mm/hr exceeded the threshold.\n"
+        "ACTION a: hold trips until confirmed\n"
+        "ACTION invented_spot: close the road\n"
+    )
+    briefing = agent.parse_briefing(reply, {"a"})
+    assert briefing.english_summary == "Spot a is red. It needs review."
+    assert briefing.actions == {"a": "hold trips until confirmed"}
+    proposal = agent._assemble(briefing, assessments, "2025-07-09T00:00", "2025-07-09T11:00")
+    assert [f["spot_id"] for f in proposal["flagged_spots"]] == ["a"]
+    assert proposal["flagged_spots"][0]["peak_mm_hr"] == 18.4
+    assert proposal["flagged_spots"][0]["risk_level"] == "red"
+    assert "18.4 mm/hr" in proposal["english_text"] and "not a confirmed flood" in proposal["english_text"]
+
+
+def test_agent_failure_and_no_flags_use_labelled_fallback(monkeypatch):
+    from backend.app.services import agent
+    def boom(*args, **kwargs):
+        raise RuntimeError("model offline")
+    monkeypatch.setattr(agent, "_run_agent", boom)
+    flagged = [_assess_for_agent("a", 12.0, 18.4)]
+    _, generated_by, reason = asyncio.run(agent.generate_proposal(flagged, "2025-07-09T00:00", "2025-07-09T11:00", "synthetic"))
+    assert generated_by == "fallback" and "model offline" in reason
+    calm = [_assess_for_agent("a", 12.0, 1.0)]
+    proposal, generated_by, reason = asyncio.run(agent.generate_proposal(calm, "2025-07-09T00:00", "2025-07-09T11:00", "synthetic"))
+    assert generated_by == "fallback" and proposal["flagged_spots"] == [] and "no flagged" in reason
+
+
+def _assess_for_agent(spot_id, threshold, peak):
+    from backend.app.models import SpotAssessment
+    ratio = peak / threshold
+    return SpotAssessment.model_validate({
+        "spot_id": spot_id, "spot_name": f"Spot {spot_id}", "threshold_mm_hr": threshold,
+        "peak_precipitation_mm_hr": peak, "peak_time": "2025-07-09T07:00", "risk_ratio": ratio,
+        "risk_level": "red" if ratio >= 1 else "amber" if ratio >= 0.6 else "green",
+        "data_source": "synthetic", "assessment_window_start": "2025-07-09T00:00",
+        "assessment_window_end": "2025-07-09T11:00",
+    })
