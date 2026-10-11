@@ -1,0 +1,113 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Underpass Sentinel API and persistence resources
+Parameters:
+  FrontendOrigins:
+    Type: CommaDelimitedList
+    Default: https://example.amplifyapp.com
+    Description: Exact browser origins allowed to call this API
+  BedrockModelId:
+    Type: String
+    Default: amazon.nova-lite-v1:0
+  BedrockRegion:
+    Type: String
+    Default: us-east-1
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 60
+    MemorySize: 512
+Resources:
+  SentinelApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: !Ref FrontendOrigins
+        AllowMethods: [GET, POST, OPTIONS]
+        AllowHeaders: [Content-Type]
+        MaxAge: 600
+  ProposalsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{AttributeName: id, AttributeType: S}]
+      KeySchema: [{AttributeName: id, KeyType: HASH}]
+      SSESpecification: {SSEEnabled: true}
+  ThresholdsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{AttributeName: spot_id, AttributeType: S}]
+      KeySchema: [{AttributeName: spot_id, KeyType: HASH}]
+      SSESpecification: {SSEEnabled: true}
+  HistoryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{AttributeName: id, AttributeType: S}]
+      KeySchema: [{AttributeName: id, KeyType: HASH}]
+      SSESpecification: {SSEEnabled: true}
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Underpass Sentinel dispatcher alerts
+  SentinelFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: backend.app.main.handler
+      Environment:
+        Variables:
+          USE_DYNAMODB: 'true'
+          AWS_REGION: !Ref AWS::Region
+          BEDROCK_REGION: !Ref BedrockRegion
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          DYNAMODB_PROPOSALS_TABLE: !Ref ProposalsTable
+          DYNAMODB_THRESHOLDS_TABLE: !Ref ThresholdsTable
+          DYNAMODB_HISTORY_TABLE: !Ref HistoryTable
+          SNS_TOPIC_ARN: !Ref AlertTopic
+          LOCAL_DATA_DIR: /tmp/underpass-sentinel
+          CORS_ORIGINS: !Join [",", !Ref FrontendOrigins]
+      Policies:
+        - Statement:
+            - Sid: ProposalReadWrite
+              Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:Scan]
+              Resource: !GetAtt ProposalsTable.Arn
+            - Sid: ThresholdReadWrite
+              Effect: Allow
+              Action: [dynamodb:PutItem, dynamodb:Scan]
+              Resource: !GetAtt ThresholdsTable.Arn
+            - Sid: HistoryReadWrite
+              Effect: Allow
+              Action: [dynamodb:PutItem, dynamodb:Scan]
+              Resource: !GetAtt HistoryTable.Arn
+            - Sid: AlertDelivery
+              Effect: Allow
+              Action: [sns:Publish, sns:Subscribe]
+              Resource: !Ref AlertTopic
+            - Sid: BedrockConverse
+              Effect: Allow
+              Action: [bedrock:InvokeModel]
+              Resource: !Sub arn:${AWS::Partition}:bedrock:${BedrockRegion}::foundation-model/${BedrockModelId}
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SentinelApi
+            Path: /{proxy+}
+            Method: ANY
+        Root:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SentinelApi
+            Path: /
+            Method: ANY
+Outputs:
+  ApiUrl:
+    Description: API Gateway HTTP API base URL
+    Value: !Sub https://${SentinelApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+  ProposalsTableName: {Value: !Ref ProposalsTable}
+  ThresholdsTableName: {Value: !Ref ThresholdsTable}
+  HistoryTableName: {Value: !Ref HistoryTable}
+  AlertTopicArn: {Value: !Ref AlertTopic}

@@ -1,0 +1,11 @@
+.env
+.local_data/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.aws-sam/
+dist/
+frontend.zip
+*.log

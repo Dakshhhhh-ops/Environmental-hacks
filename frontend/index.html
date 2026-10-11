@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07121d"><title>Underpass Sentinel | Delhi</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="#"><span class="brand-mark">U</span><span>UNDERPASS <b>SENTINEL</b><small>DELHI · DECISION SUPPORT</small></span></a>
+    <div class="mode"><button id="liveBtn" class="mode-btn active">LIVE</button><button id="replayBtn" class="mode-btn">REPLAY</button><input id="dateInput" type="date" hidden aria-label="Historical replay date"></div>
+    <div class="top-actions"><span id="sourceStatus" class="source"><i></i> CONNECTING</span><button id="runBtn" class="primary">Run assessment <span>↗</span></button></div>
+  </header>
+  <main>
+    <div class="replay-banner" id="replayBanner" hidden>◷ &nbsp; REPLAY — HISTORICAL DATA <span>Historical forecasts may not represent information available at the time.</span></div>
+    <section class="workspace">
+      <div class="map-wrap"><div id="map" role="application" aria-label="Map of Delhi candidate waterlogging risk locations"></div>
+        <div class="map-heading"><span class="eyebrow">DELHI · NETWORK OVERVIEW</span><h1>Rainfall risk monitor</h1><p id="windowLabel">Waiting for assessment</p></div>
+        <div class="map-legend"><span><i class="dot green"></i>LOW</span><span><i class="dot amber"></i>WATCH</span><span><i class="dot red"></i>HIGH</span></div>
+        <div class="disclaimer">ESTIMATED WATERLOGGING RISK <span>Rainfall proxy · unverified thresholds · not a flood prediction</span></div>
+      </div>
+      <aside class="side-panel" aria-label="Dispatcher panel">
+        <div class="panel-tabs"><button class="tab active" data-tab="dispatch">DISPATCH</button><button class="tab" data-tab="history">HISTORY <span id="historyCount">0</span></button></div>
+        <section id="dispatchView">
+          <div class="steps" id="steps" aria-label="Workflow progress"><span class="done">01 Forecast</span><span>02 Assess</span><span>03 Propose</span><span>04 Approve</span><span>05 Act</span><span>06 Verify</span></div>
+          <div id="proposalArea" class="proposal-area"><div class="empty"><span>◉</span><h2>Ready when you are</h2><p>Run an assessment to compare rainfall forecasts with estimated location thresholds.</p><button id="emptyRun" class="primary">Run assessment ↗</button></div></div>
+          <div class="subscribe"><label for="emailInput">ALERT DISTRIBUTION</label><div class="email-row"><input id="emailInput" type="email" placeholder="coordinator@example.org"><button id="subscribeBtn" aria-label="Subscribe email">→</button></div><p id="subscribeMsg">Email recipients must confirm their SNS subscription.</p></div>
+        </section>
+        <section id="historyView" hidden><div class="history-head"><h2>Verification history</h2><p>Rainfall comparisons; no flood observations are available.</p></div><div id="historyList" class="history-list"><div class="empty-small">No completed verifications yet.</div></div></section>
+      </aside>
+    </section>
+    <section class="locations"><div class="section-title"><div><span class="eyebrow">ASSESSMENT LOCATIONS</span><h2>Candidate spots <span id="spotCount">—</span></h2></div><span class="unverified">ALL COORDINATES & THRESHOLDS UNVERIFIED</span></div><div id="spotGrid" class="spot-grid"><div class="loading">Loading location inputs…</div></div></section>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="config.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script type="module" src="app.js"></script>
+</body></html>
