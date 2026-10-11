@@ -2,9 +2,11 @@
 
 Decision support for the people who dispatch school buses, ambulances and delivery fleets in Delhi during the monsoon. It watches 26 candidate low points (underpasses and low-lying roads), flags the ones where rain is forecast or already falling hard, has an AI agent draft the alert, and keeps a human dispatcher in charge of sending it.
 
+**Live demo on AWS:** <https://ssainw9s4c.execute-api.us-east-1.amazonaws.com> · **Driver page:** <https://ssainw9s4c.execute-api.us-east-1.amazonaws.com/advisory.html>
+
 It is a prototype. It is **not** a certified flood prediction or emergency response system.
 
-Built for Environmental Hacks (WeMakeDevs with AWS), **Heat and Water** track, using both paths. **Build It:** the agents are built with the open-source [Strands Agents SDK](https://strandsagents.com) from AWS and run on a local Ollama model, so no AWS account is needed. **Ship It:** the same code is deployed on AWS with AWS SAM (Lambda, API Gateway, DynamoDB, SNS, Bedrock). See [Deploying to AWS](#deploying-to-aws) for what works on the live deployment and what does not yet.
+Built for Environmental Hacks (WeMakeDevs with AWS), **Heat and Water** track, using both paths. **Build It:** the agents are built with the open-source [Strands Agents SDK](https://strandsagents.com) from AWS and run on a local Ollama model, so no AWS account is needed. **Ship It:** the same code is deployed on AWS with AWS SAM (Lambda, API Gateway, DynamoDB, SNS, Bedrock). See [Live deployment status](#live-deployment-status-tested-2026-10-12) for what works on the live deployment and what does not yet.
 
 ## The problem
 
@@ -129,7 +131,7 @@ For agent-drafted alerts, install [Ollama](https://ollama.com), start it, and pu
 - 38 tests passed.
 - `scripts/backtest.py` ran against the live Open-Meteo APIs and produced the numbers above.
 - A scripted click-through in headless Chrome, against a live local server with real weather data and the Strands agent on Ollama (`qwen3-vl:2b-instruct`), passed 16 steps with no console errors (run before the Ask tab was added to the page; the Ask endpoint was checked separately against the live agent): hero replay of the cloudburst, language switch, day-ahead replay, route check, approve, verify, track record, reject, 3D view with drag, live assessment, table filter, the replay timeline, forecast-versus-rain-now actions, driver advisory in both languages, and a 390 px phone layout with no sideways scroll.
-- The AWS deployment was tested over its public URL; see [Live deployment status](#live-deployment-status-tested-2026-10-12). Alert creation fails there, so Bedrock answering, DynamoDB writes and SNS delivery are not verified on AWS.
+- The AWS deployment was tested over its public URL; see [Live deployment status](#live-deployment-status-tested-2026-10-12). Everything works there except the Bedrock agent, which does not answer in time.
 
 ## Deploying to AWS
 
@@ -153,12 +155,15 @@ The stack is deployed in `us-east-1` at <https://ssainw9s4c.execute-api.us-east-
 |---|---|
 | Dashboard, styles, scripts, hero photo, driver page | Load from Lambda |
 | Health check | Reports DynamoDB storage, SNS configured, weather reachable, agent provider Bedrock (Nova Lite) |
-| Locations, backtest, route check | Work |
-| Replay risk for any date and hour (`/api/risk`) | Works; 31 Jul 2024 at 20:00 returns all 26 spots HIGH from recorded rain |
-| **Creating an alert** (`POST /api/proposals`, used by "Run assessment" and the replay buttons) | **Fails**: times out at API Gateway's 30 second limit with a 500 |
-| Approve, verify, driver advisory content, Ask, SNS email | Not tested on AWS, because they need an alert first |
+| Locations, backtest, route check, hour-by-hour replay | Work |
+| Creating an alert, including flagged days and the 31 Jul 2024 cloudburst | Works, in 17 to 24 seconds, **with template text** (see below) |
+| Approve | Works; published through Amazon SNS with a message ID |
+| Driver advisory | Works; shows the approved alert |
+| Check against recorded rain | Works; results stored in DynamoDB |
+| Ask | Works, matched by keywords (see below) |
+| **Agent on Amazon Bedrock** | **Not answering**: the call does not finish within the 12 second cap, so alerts use the labelled template and Ask uses keyword matching |
 
-The cause of the timeout is not confirmed, since the Lambda logs have not been read. The likely candidates are the Bedrock agent call or the cold start. A fix is in the repository (the agent is capped at 12 seconds and falls back to template text with the reason shown; Lambda memory doubled) but **the failing result above is from the last test, and it is not confirmed that the fix has been deployed or that it works.** Until it is, use the local run for the full workflow.
+The cause of the Bedrock delay is not confirmed. Numbers, risk levels, actions and Hindi text are unaffected, because they never come from the model. The agent-drafted briefing and agent-routed Ask are verified on the local run (Ollama), not on AWS. Email delivery to a subscribed inbox was not checked.
 
 Other notes: the bundle is about 43 MB. Responses were sometimes slow in testing (tens of seconds for static files on one run). The API has no authentication, so anyone with the URL can approve an alert; delete the stack after judging with `sam delete --stack-name underpass-sentinel --region us-east-1`.
 
@@ -175,7 +180,7 @@ Other notes: the bundle is about 43 MB. Responses were sometimes slow in testing
 - There is no user login. Anyone who can reach the app can approve an alert.
 - Local JSON storage is for a single demo process.
 - Map tiles, fonts, Three.js, Open-Meteo, OSRM and Ollama are external dependencies.
-- On AWS, alert creation currently times out, so the full workflow is only verified locally.
+- On AWS, the Bedrock agent currently does not answer in time, so the live site shows template alerts. The agent is verified only on the local run.
 
 ## AI Coding Tools Used
 
