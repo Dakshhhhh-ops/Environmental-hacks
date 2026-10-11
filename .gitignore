@@ -9,3 +9,6 @@ venv/
 dist/
 frontend.zip
 *.log
+
+.lambda-build/
+samconfig.toml

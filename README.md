@@ -129,18 +129,23 @@ For agent-drafted alerts, install [Ollama](https://ollama.com), start it, and pu
 - 38 tests passed.
 - `scripts/backtest.py` ran against the live Open-Meteo APIs and produced the numbers above.
 - A scripted click-through in headless Chrome, against a live local server with real weather data and the Strands agent on Ollama (`qwen3-vl:2b-instruct`), passed 16 steps with no console errors (run before the Ask tab was added to the page; the Ask endpoint was checked separately against the live agent): hero replay of the cloudburst, language switch, day-ahead replay, route check, approve, verify, track record, reject, 3D view with drag, live assessment, table filter, the replay timeline, forecast-versus-rain-now actions, driver advisory in both languages, and a 390 px phone layout with no sideways scroll.
-- Not run: `sam build`, any AWS deployment, the Bedrock provider (the local AWS credentials were rejected), SNS delivery, and DynamoDB storage.
+- Not run: any AWS deployment, the Bedrock provider (the local AWS credentials were rejected), SNS delivery, and DynamoDB storage.
 
-## Deploying to AWS (untested)
+## Deploying to AWS
 
-[`template.yaml`](template.yaml) defines a Lambda (FastAPI via Mangum) behind an API Gateway HTTP API, three DynamoDB tables, and an SNS topic, with `AGENT_PROVIDER=bedrock`.
+[`template.yaml`](template.yaml) defines one Lambda (FastAPI via Mangum, Python 3.13) behind an API Gateway HTTP API, three DynamoDB tables, and an SNS topic. The Lambda serves the dashboard as well as the API, so the stack output `ApiUrl` is the whole app: no separate frontend hosting is needed. On AWS the agent runs on Amazon Bedrock (`AGENT_PROVIDER=bedrock`).
 
-1. Install the AWS SAM CLI and configure credentials.
-2. Enable access to the Bedrock model you choose in your region, then `sam build` and `sam deploy --guided`, setting `BedrockModelId`, `BedrockRegion` and `FrontendOrigins`.
-3. Put the `ApiUrl` output in `frontend/config.js`, run `sh scripts/package_frontend.sh`, and upload the ZIP to Amplify Hosting.
-4. Subscribe an email to the SNS topic and confirm it.
+You need an AWS account, credentials allowed to create CloudFormation, Lambda, API Gateway, DynamoDB, SNS, S3 and IAM resources, and access to the Bedrock model in the chosen region.
 
-This path has not been built or deployed from this workspace. The frontend holds no credentials. The API has no authentication, so deploy it only inside an access-controlled environment.
+```sh
+pip install aws-sam-cli uv
+python scripts/build_lambda.py        # builds .lambda-build/ for Linux, from any OS
+sam deploy --template template.yaml --stack-name underpass-sentinel --region us-east-1   --resolve-s3 --capabilities CAPABILITY_IAM   --parameter-overrides BedrockModelId=us.amazon.nova-lite-v1:0
+```
+
+Open the `ApiUrl` output. To receive emails, subscribe an address to the `AlertTopicArn` topic and confirm it.
+
+Status: the bundle builds (about 43 MB), the template validates, and the Lambda handler was exercised locally with simulated API Gateway events (dashboard, images, API, alert creation). **It has not been deployed to an AWS account from this workspace**, so Bedrock, DynamoDB and SNS behaviour on AWS is unverified. API Gateway limits a request to 30 seconds. The API has no authentication: anyone with the URL can approve an alert, so delete the stack after the demo (`sam delete --stack-name underpass-sentinel`).
 
 ## Limitations
 

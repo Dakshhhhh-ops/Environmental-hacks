@@ -1,11 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Underpass Sentinel API and persistence resources
+Description: Underpass Sentinel - dashboard, API, agent and persistence
 Parameters:
   FrontendOrigins:
     Type: CommaDelimitedList
     Default: https://example.amplifyapp.com
-    Description: Exact browser origins allowed to call this API
+    Description: Extra browser origins allowed to call this API. Not needed when the dashboard is opened from the API URL itself.
   BedrockModelId:
     Type: String
     Default: amazon.nova-lite-v1:0
@@ -14,9 +14,9 @@ Parameters:
     Default: us-east-1
 Globals:
   Function:
-    Runtime: python3.12
-    Timeout: 60
-    MemorySize: 512
+    Runtime: python3.13
+    Timeout: 29
+    MemorySize: 1024
 Resources:
   SentinelApi:
     Type: AWS::Serverless::HttpApi
@@ -54,12 +54,11 @@ Resources:
   SentinelFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
+      CodeUri: .lambda-build/
       Handler: backend.app.main.handler
       Environment:
         Variables:
           USE_DYNAMODB: 'true'
-          AWS_REGION: !Ref AWS::Region
           AGENT_PROVIDER: bedrock
           BEDROCK_REGION: !Ref BedrockRegion
           BEDROCK_MODEL_ID: !Ref BedrockModelId
@@ -71,26 +70,19 @@ Resources:
           CORS_ORIGINS: !Join [",", !Ref FrontendOrigins]
       Policies:
         - Statement:
-            - Sid: ProposalReadWrite
+            - Sid: Tables
               Effect: Allow
-              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:Scan]
-              Resource: !GetAtt ProposalsTable.Arn
-            - Sid: ThresholdReadWrite
-              Effect: Allow
-              Action: [dynamodb:PutItem, dynamodb:Scan]
-              Resource: !GetAtt ThresholdsTable.Arn
-            - Sid: HistoryReadWrite
-              Effect: Allow
-              Action: [dynamodb:PutItem, dynamodb:Scan]
-              Resource: !GetAtt HistoryTable.Arn
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Scan, dynamodb:Query, dynamodb:BatchWriteItem]
+              Resource: [!GetAtt ProposalsTable.Arn, !GetAtt ThresholdsTable.Arn, !GetAtt HistoryTable.Arn]
             - Sid: AlertDelivery
               Effect: Allow
               Action: [sns:Publish, sns:Subscribe]
               Resource: !Ref AlertTopic
-            - Sid: BedrockConverse
+            # Inference profiles route to models in several regions, so the model ARN cannot be pinned here.
+            - Sid: BedrockAgentModel
               Effect: Allow
               Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
-              Resource: !Sub arn:${AWS::Partition}:bedrock:${BedrockRegion}::foundation-model/${BedrockModelId}
+              Resource: '*'
       Events:
         Api:
           Type: HttpApi
@@ -106,7 +98,7 @@ Resources:
             Method: ANY
 Outputs:
   ApiUrl:
-    Description: API Gateway HTTP API base URL
+    Description: Open this URL for the dashboard. The API is under /api.
     Value: !Sub https://${SentinelApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
   ProposalsTableName: {Value: !Ref ProposalsTable}
   ThresholdsTableName: {Value: !Ref ThresholdsTable}
