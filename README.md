@@ -2,13 +2,19 @@
 
 An AI assisted decision support prototype for transport coordinators assessing rainfall related waterlogging risk at eight candidate low points in Delhi. It is designed for a dispatcher to review before any warning is distributed. It is **not** a certified flood prediction or emergency response system.
 
+Built for Environmental Hacks (WeMakeDevs with AWS), **Heat and Water** track, on the **Build It** path: the proposal is drafted by an agent built with the open-source [Strands Agents SDK](https://strandsagents.com) from AWS, running on a local Ollama model. No AWS account is needed to run it. The same code can be deployed to AWS with the included SAM template.
+
+## The problem
+
+Every monsoon, the same Delhi underpasses fill with water after a short, intense burst of rain. School buses, ambulances and delivery fleets are routed into them because the person dispatching vehicles has a city-wide rain forecast, not a per-underpass answer. Underpass Sentinel turns the hourly forecast into a per-location risk level, has an agent draft the warning, and keeps a human in charge of sending it.
+
 ## Intended users and workflow
 
 School transport coordinators, ambulance dispatchers, fleet operators, and other transport coordinators can use the six step workflow:
 
 1. **Forecast:** request hourly precipitation from Open Meteo, or choose a clearly labelled historical Replay.
 2. **Assess:** deterministic backend code compares the peak hourly precipitation with the current estimated threshold.
-3. **Propose:** Bedrock Converse drafts an English and Hindi recommendation from those computed results. If Bedrock is unavailable or returns invalid content, a deterministic template is identified as a fallback.
+3. **Propose:** a Strands agent reads the computed results through tools, checks how past alerts for each flagged spot compared with observed rainfall, and drafts the briefing and one action per spot. Numbers, risk levels and the Hindi text always come from the deterministic engine. If the model is unavailable or its reply is unusable, a deterministic template is used and labelled as a fallback.
 4. **Approve:** a dispatcher explicitly approves or rejects the proposal.
 5. **Act:** approved text is sent to SNS when configured; local mode records `local-skipped` and sends nothing.
 6. **Verify:** archived rainfall is compared with the forecast and may adjust estimated thresholds. This verifies rainfall comparisons only, not flooding.
@@ -18,7 +24,9 @@ flowchart LR
   Browser[Static dashboard] --> API[FastAPI / API Gateway]
   API --> OM[Open Meteo forecast and archive]
   API --> Risk[Deterministic risk engine]
-  Risk --> AI[Bedrock Converse, with labelled template fallback]
+  Risk --> AI[Strands agent on Ollama or Bedrock, with labelled template fallback]
+  AI -. tool calls .-> Risk
+  AI -. tool calls .-> Store
   AI --> Review[Dispatcher approval]
   Review --> SNS[Amazon SNS, only after approval]
   API --> Store[(Local JSON or DynamoDB)]
@@ -40,7 +48,8 @@ Every threshold adjustment uses a rainfall classification: flagged plus observed
 
 - **FastAPI / Mangum:** JSON endpoints and Lambda adapter. `/api/health` gives safe readiness indicators. `/docs` provides OpenAPI documentation.
 - **Open Meteo:** public live forecast, historical forecast, and archived precipitation endpoints; no API key is required. Requests are bounded by timeouts and location concurrency limits.
-- **Amazon Bedrock:** `bedrock-runtime` Converse API receives structured, calculated assessment data. `BEDROCK_MODEL_ID` and `BEDROCK_REGION` configure access. `amazon.nova-lite-v1:0` is the default identifier; availability and model access vary by account and region. Invalid output or service errors produce `generated_by: fallback` plus a diagnostic reason.
+- **Strands Agents SDK (AWS open source):** [`backend/app/services/agent.py`](backend/app/services/agent.py) defines the briefing agent and its two tools, `get_flagged_spots` and `get_calibration_history`. The agent writes prose only; the backend copies every number, risk level, spot id and timestamp from the computed assessment and validates the result. Each proposal stores an `agent_trace` (framework, provider, model, tools called) that the dashboard shows. A reply the agent wrote without reading the assessment is rejected. Failures produce `generated_by: fallback` plus a reason.
+- **Model provider:** `AGENT_PROVIDER=ollama` (default) uses a local Ollama model set by `OLLAMA_MODEL_ID`. `AGENT_PROVIDER=bedrock` uses Amazon Bedrock through the same Strands agent, with `BEDROCK_MODEL_ID` and `BEDROCK_REGION`; model access varies by account and region. The SAM template deploys the Lambda with `AGENT_PROVIDER=bedrock`.
 - **Amazon DynamoDB:** proposals, independently calibrated thresholds, and verification history when `USE_DYNAMODB=true`. Local mode stores JSON under `.local_data/` and survives restarts. A configured DynamoDB permission or setup error fails clearly; it does not switch to local mode.
 - **Amazon SNS:** sends the bilingual alert only after dispatcher approval. Without `SNS_TOPIC_ARN`, approval is recorded as `local-skipped`. Email subscription requires recipient confirmation by SNS before delivery.
 - **API Gateway HTTP API / SAM:** publishes the Lambda API with CORS origins configured as an exact list. CORS is not an authentication mechanism; deploy this decision support prototype only within an appropriate access-controlled environment.
@@ -48,7 +57,7 @@ Every threshold adjustment uses a rainfall classification: flagged plus observed
 
 ## Local setup
 
-Requires Python 3.12 or newer (the SAM Lambda runtime is Python 3.12) and a network connection for live or historical Open Meteo data. Local Replay and the labelled synthetic fixture do not require AWS credentials.
+Requires Python 3.12 or newer (the SAM Lambda runtime is Python 3.12) and a network connection for live or historical Open Meteo data. Nothing in local mode requires AWS credentials. For agent-drafted proposals, install [Ollama](https://ollama.com), start it, and pull a tool-capable model (`ollama pull qwen3-vl:2b-instruct`, or set `OLLAMA_MODEL_ID` to one you have). Without Ollama the app still works and labels proposals as template fallback.
 
 ```sh
 python -m venv .venv
@@ -60,15 +69,15 @@ cp .env.example .env
 python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open <http://127.0.0.1:8000>. The backend also serves the static dashboard, so requests use the same origin. Choose Replay and a past date, run an assessment, review the source badge and proposal, then approve or reject. Without SNS, the delivery result must say `local-skipped`. Historical rainfall can be verified after a Replay. Review the History tab for source, threshold changes, and rainfall-only caveats. If Open Meteo cannot provide values, the separate synthetic option proves the assessment/proposal/approval workflow. Synthetic forecasts cannot be verified or used for threshold calibration; use a historical forecast assessment instead.
+Open <http://127.0.0.1:8000>. If port 8000 is in use, pick another port and set `CORS_ORIGINS` to match. The backend also serves the static dashboard, so requests use the same origin. Choose Replay and a past date, run an assessment, review the source badge and proposal, then approve or reject. Without SNS, the delivery result must say `local-skipped`. Historical rainfall can be verified after a Replay. Review the History tab for source, threshold changes, and rainfall-only caveats. If Open Meteo cannot provide values, the separate synthetic option proves the assessment/proposal/approval workflow. Synthetic forecasts cannot be verified or used for threshold calibration; use a historical forecast assessment instead.
 
 For shell-based startup on Linux/macOS/Git Bash, use `sh scripts/run_local.sh`. API docs are at <http://127.0.0.1:8000/docs>; health is at <http://127.0.0.1:8000/api/health>.
 
 ## Tests
 
-Run `python -m pytest -q`. Tests cover risk boundaries and invalid values, calibration bounds and outcome classification, proposal consistency, candidate inputs, API input validation, local persistence across storage recreation, and approval/rejection with local skipped delivery. External services are stubbed for the test suite; passing tests do not prove AWS, Bedrock, SNS, or Open Meteo availability.
+Run `python -m pytest -q`. Tests cover agent reply parsing and fallback, risk boundaries and invalid values, calibration bounds and outcome classification, proposal consistency, candidate inputs, API input validation, local persistence across storage recreation, and approval/rejection with local skipped delivery. External services are stubbed for the test suite; passing tests do not prove Ollama, AWS, Bedrock, SNS, or Open Meteo availability.
 
-**Execution in this workspace (2026-10-11):** 22 tests passed, 0 failed; `node --check frontend/app.js` and Python compilation passed; the reproducible frontend ZIP was generated twice with matching SHA-256. A live local server returned HTTP 200 for the dashboard and API. A real Replay for 2025-05-01 returned rainfall data for all eight candidate spots, completed a fallback proposal, recorded approval as `local-skipped`, and produced eight rainfall-based `no_event` history records from archived observations. Bedrock fell back because the AWS security token was rejected; no SNS topic was configured. SAM CLI and browser automation were unavailable, so `sam build` and a 390px viewport inspection were not run. Git metadata is not present in this workspace, and Git refuses the parent home-directory metadata because of its ownership boundary, so no commit was created.
+**Execution in this workspace (2026-10-11):** 24 tests passed, 0 failed. Against a live local server, a real Replay for 2023-07-09 returned historical forecast rainfall for all eight candidate spots and flagged five as amber. The Strands agent (Ollama, `qwen3-vl:2b-instruct`) called `get_flagged_spots` and `get_calibration_history` for each flagged spot and drafted the proposal in about 20 seconds. Approval was recorded as `local-skipped` because no SNS topic was configured, and rainfall verification wrote history records. A Replay for 2025-07-29 flagged nothing and correctly used the template without calling the model. Not run here: `sam build`, any AWS deployment, the Bedrock provider (the local AWS credentials were rejected), and a visual browser check of the dashboard.
 
 ## AWS SAM deployment
 
@@ -92,9 +101,9 @@ The frontend contains no AWS credentials. Do not put credentials in `frontend/co
 ## Three minute demo script
 
 1. Open the dashboard and point out the candidate locations and unverified threshold disclaimer.
-2. Select **Replay**, choose a completed date, and run an assessment. Explain that historical forecast and archived observed rainfall are distinct sources.
+2. Select **Replay**, choose a completed date (2023-07-09 flags five spots), and run an assessment. Explain that historical forecast and archived observed rainfall are distinct sources.
 3. Show the source and risk labels, open a spot marker, and inspect its estimated threshold and peak precipitation.
-4. Review the English and Hindi proposal, risk reasoning, and generation badge. If Bedrock access is absent, explain that the clearly marked deterministic fallback is active.
+4. Review the proposal, the **STRANDS AGENT** badge, and the trace line listing the tools the agent called. Switch to the Hindi tab. Explain that the agent writes the briefing while numbers, risk levels and Hindi come from the deterministic engine.
 5. Reject a proposal to show that rejected warnings cannot publish; create another proposal and explicitly approve it. In local mode, show `local-skipped`, not a delivered notification.
 6. Verify a Replay proposal and open History. Explain that results classify rainfall comparisons only; this demo has no flood observation labels.
 
@@ -102,6 +111,7 @@ The frontend contains no AWS credentials. Do not put credentials in `frontend/co
 
 - The eight locations, their coordinates, thresholds, and generic route review prompts are unverified demo inputs. No alternative route is asserted safe.
 - Historical forecast data is not a record of what a dispatcher actually received at the historical time. Archive fallback is labelled as such.
+- A small local model writes plain but sometimes imprecise prose. Its reasoning is shown as an "Agent note" after the computed reasoning, and it never controls numbers, risk levels, flagged locations, or the Hindi text.
 - Open Meteo availability, coverage, map tiles, fonts, internet connectivity, Bedrock model access, SNS subscriptions, and AWS permissions are external dependencies.
 - The prototype does not authenticate dispatcher users, measure on-road conditions, ingest official closures, or establish hydraulic flood depth or ground truth.
 - For a local demo without provider connectivity, use the explicit synthetic option. Synthetic and archive demonstration forecasts cannot be verified or used to calibrate thresholds; use a historical forecast assessment instead.

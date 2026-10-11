@@ -60,6 +60,7 @@ Resources:
         Variables:
           USE_DYNAMODB: 'true'
           AWS_REGION: !Ref AWS::Region
+          AGENT_PROVIDER: bedrock
           BEDROCK_REGION: !Ref BedrockRegion
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           DYNAMODB_PROPOSALS_TABLE: !Ref ProposalsTable
@@ -88,7 +89,7 @@ Resources:
               Resource: !Ref AlertTopic
             - Sid: BedrockConverse
               Effect: Allow
-              Action: [bedrock:InvokeModel]
+              Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
               Resource: !Sub arn:${AWS::Partition}:bedrock:${BedrockRegion}::foundation-model/${BedrockModelId}
       Events:
         Api:

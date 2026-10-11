@@ -18,7 +18,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from ..models import RiskLevel, SpotAssessment
-from .bedrock import _build_flagged_payload, _get_hint, build_fallback_proposal, validate_proposal_json
+from .bedrock import _build_flagged_payload, build_fallback_proposal, validate_proposal_json
 from .storage import get_storage
 
 
@@ -32,6 +32,7 @@ ACTION <spot_id>: <one short action>   (one line per flagged spot)
 Rules:
 - Use only values returned by the tools. Never invent rainfall values, risk levels, or locations.
 - Rainfall is a proxy for possible waterlogging, not a confirmed flood.
+- Each spot has a "status" field. Repeat it as given: amber means the forecast peak is close to but still below the threshold; red means it reached or passed the threshold.
 - Actions are for vehicle dispatch only. For a red spot: hold trips through it until a dispatcher confirms conditions. For an amber spot: check conditions before routing vehicles through it. Never order evacuations or emergency response, and never say a route is safe."""
 
 DISCLAIMER = (
@@ -76,6 +77,19 @@ def parse_briefing(text: str, flagged_ids: set[str]) -> Briefing:
     if not summary:
         raise ValueError("agent reply had no SUMMARY line")
     return Briefing(english_summary=" ".join(summary), reasoning=" ".join(reasoning), actions=actions)
+
+
+DEFAULT_ACTIONS = {
+    RiskLevel.RED: "Hold trips through this spot until a dispatcher confirms conditions.",
+    RiskLevel.AMBER: "Check conditions before routing vehicles through this spot.",
+}
+
+
+def _status(a: SpotAssessment) -> str:
+    pct = round(a.risk_ratio * 100)
+    if a.risk_level == RiskLevel.RED:
+        return f"forecast peak reached {pct}% of the estimated threshold (at or above it)"
+    return f"forecast peak reached {pct}% of the estimated threshold (close to it, still below)"
 
 
 def agent_provider() -> str:
@@ -185,14 +199,14 @@ def _assemble(briefing: Briefing, assessments: list[SpotAssessment], window_star
     proposal = {
         "english_text": english,
         "hindi_text": template["hindi_text"],
-        "reasoning": briefing.reasoning.strip() or template["reasoning"],
+        "reasoning": template["reasoning"] + (f" Agent note: {briefing.reasoning.strip()}" if briefing.reasoning.strip() else ""),
         "flagged_spots": [
             {
                 "spot_id": a.spot_id,
                 "risk_level": a.risk_level.value,
                 "peak_mm_hr": a.peak_precipitation_mm_hr,
                 "peak_time": a.peak_time or window_start,
-                "recommended_action": briefing.actions.get(a.spot_id) or _get_hint(a.spot_id),
+                "recommended_action": briefing.actions.get(a.spot_id) or DEFAULT_ACTIONS[a.risk_level],
             }
             for a in flagged_a
         ],
@@ -214,6 +228,10 @@ async def generate_proposal(
     generated_by is 'strands-agent' or 'fallback'.
     """
     flagged = _build_flagged_payload(assessments)
+    status = {a.spot_id: _status(a) for a in assessments if a.risk_level in DEFAULT_ACTIONS}
+    for f in flagged:
+        f["status"] = status[f["spot_id"]]
+        f.pop("alternate_route_hint", None)
     if not flagged:
         # Nothing to brief on; the template states that plainly without a model call.
         return build_fallback_proposal(assessments, window_start, window_end), "fallback", "no flagged locations; agent not needed"
