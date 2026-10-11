@@ -1,6 +1,6 @@
 # Underpass Sentinel
 
-An AI assisted decision support prototype for transport coordinators assessing rainfall related waterlogging risk at eight candidate low points in Delhi. It is designed for a dispatcher to review before any warning is distributed. It is **not** a certified flood prediction or emergency response system.
+An AI assisted decision support prototype for transport coordinators assessing rainfall related waterlogging risk at 26 candidate low points across Delhi. It is designed for a dispatcher to review before any warning is distributed. It is **not** a certified flood prediction or emergency response system.
 
 Built for Environmental Hacks (WeMakeDevs with AWS), **Heat and Water** track, on the **Build It** path: the proposal is drafted by an agent built with the open-source [Strands Agents SDK](https://strandsagents.com) from AWS, running on a local Ollama model. No AWS account is needed to run it. The same code can be deployed to AWS with the included SAM template.
 
@@ -38,7 +38,7 @@ flowchart LR
 
 For each location, the backend takes the maximum usable hourly precipitation in the assessment window, then computes `peak mm/hr ÷ threshold mm/hr`. A ratio below 0.6 is GREEN, 0.6 through less than 1.0 is AMBER, and 1.0 or above is RED. Missing, malformed, non-finite, and negative inputs are excluded; if no usable values remain, the spot is marked unavailable. Rainfall intensity is a proxy for potential waterlogging, not a measurement of standing water or a confirmed flood.
 
-The inputs in [`data/spots.json`](data/spots.json) are eight **unverified candidate coordinates and estimated thresholds**. Every location has `verified: false`; thresholds are demonstration inputs between 8 and 25 mm/hr and are not official values. Coordinates and thresholds require independent field and engineering verification. Mutable calibration values are stored separately from those original inputs.
+The inputs in [`data/spots.json`](data/spots.json) are 26 **unverified candidate coordinates and estimated thresholds**. Every location has `verified: false`; thresholds are demonstration inputs between 10 and 22 mm/hr and are not official values. Coordinates and thresholds require independent field and engineering verification. Mutable calibration values are stored separately from those original inputs.
 
 All precipitation values are in millimetres per hour. The official [Historical Forecast API](https://open-meteo.com/en/docs/historical-forecast-api) documents historical forecast coverage starting around 2021, with model coverage varying by date; its endpoint is `/v1/forecast` on the `historical-forecast-api.open-meteo.com` host. The official [Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api) documents `/v1/archive`, ISO date parameters, timezone handling, and precipitation as the preceding-hour sum in mm. Times returned by Open Meteo use `Asia/Kolkata` local time. Live mode includes the current local hour, floored to the hour, plus the next 11 hourly timestamps (12 inclusive); precipitation at each timestamp is the provider's preceding-hour sum. Replay uses 00:00 through 11:00 inclusive on the selected date. Replay requests the Historical Forecast API for forecast precipitation and Archive API for observed precipitation. If historical forecast data is unavailable but archive data exists, the archive is labelled as a **forecast demonstration fallback**; it is not represented as the forecast a dispatcher would have seen at the time. Archive observations remain a separate series for verification. If providers return no usable rainfall, the interface offers a separate synthetic fixture, clearly labelled; it is never presented as live or historical weather.
 
@@ -77,7 +77,7 @@ For shell-based startup on Linux/macOS/Git Bash, use `sh scripts/run_local.sh`. 
 
 Run `python -m pytest -q`. Tests cover agent reply parsing and fallback, risk boundaries and invalid values, calibration bounds and outcome classification, proposal consistency, candidate inputs, API input validation, local persistence across storage recreation, and approval/rejection with local skipped delivery. External services are stubbed for the test suite; passing tests do not prove Ollama, AWS, Bedrock, SNS, or Open Meteo availability.
 
-**Execution in this workspace (2026-10-11):** 24 tests passed, 0 failed. Against a live local server, a real Replay for 2023-07-09 returned historical forecast rainfall for all eight candidate spots and flagged five as amber. The Strands agent (Ollama, `qwen3-vl:2b-instruct`) called `get_flagged_spots` and `get_calibration_history` for each flagged spot and drafted the proposal in about 20 seconds. Approval was recorded as `local-skipped` because no SNS topic was configured, and rainfall verification wrote history records. A Replay for 2025-07-29 flagged nothing and correctly used the template without calling the model. Not run here: `sam build`, any AWS deployment, the Bedrock provider (the local AWS credentials were rejected), and a visual browser check of the dashboard.
+**Execution in this workspace (2026-10-11):** 25 tests passed, 0 failed. Against a live local server, a real Replay for 2023-07-09 returned historical forecast rainfall for all 26 candidate spots and flagged 14 as amber. The Strands agent (Ollama, `qwen3-vl:2b-instruct`) called `get_flagged_spots` and `get_calibration_history` and drafted the proposal. Approval was recorded as `local-skipped` because no SNS topic was configured, and rainfall verification wrote history records. Route check returned live OSRM alternatives and scored them against the flagged spots. The dashboard was checked with a headless Chrome screenshot at 1440 px. Not run here: `sam build`, any AWS deployment, the Bedrock provider (the local AWS credentials were rejected), and a phone-width check.
 
 ## AWS SAM deployment
 
@@ -98,20 +98,26 @@ Run `python -m pytest -q`. Tests cover agent reply parsing and fallback, risk bo
 
 The frontend contains no AWS credentials. Do not put credentials in `frontend/config.js`.
 
+## Route check
+
+The **Route check** tab answers the question a dispatcher actually has: can I send this vehicle now? Pick an origin and destination (hospitals, stations, bus terminals, campuses). The backend asks the public OSRM service (OpenStreetMap data) for driving alternatives, measures how close each route passes to every flagged low point, and scores it (red 10, amber 3, within 300 m). The dashboard draws the routes, suggests the lowest-risk one, and says plainly when every route passes a flagged spot. "Clear of flagged spots" is not a claim that a road is dry. Code: [`backend/app/services/routing.py`](backend/app/services/routing.py).
+
 ## Three minute demo script
 
-1. Open the dashboard and point out the candidate locations and unverified threshold disclaimer.
-2. Select **Replay**, choose a completed date (2023-07-09 flags five spots), and run an assessment. Explain that historical forecast and archived observed rainfall are distinct sources.
-3. Show the source and risk labels, open a spot marker, and inspect its estimated threshold and peak precipitation.
-4. Review the proposal, the **STRANDS AGENT** badge, and the trace line listing the tools the agent called. Switch to the Hindi tab. Explain that the agent writes the briefing while numbers, risk levels and Hindi come from the deterministic engine.
-5. Reject a proposal to show that rejected warnings cannot publish; create another proposal and explicitly approve it. In local mode, show `local-skipped`, not a delivered notification.
-6. Verify a Replay proposal and open History. Explain that results classify rainfall comparisons only; this demo has no flood observation labels.
+1. Open the dashboard. Point out the 26 monitored low points, the KPI strip, and the unverified-estimates label.
+2. Click **REPLAY**, then the **9 Jul 2023** chip. The map colours each low point; the table shows forecast peak against threshold and the hourly rain bars.
+3. In **Briefing**, show the **AI AGENT DRAFT** badge and the trace of tools the Strands agent called. Switch to the Hindi tab. Say that numbers, risk levels and Hindi come from the rule engine, never the model.
+4. Open **Route check**, keep the default trip (Nizamuddin Station to Delhi University North Campus) and click **Check route**. Show the suggested route and the alternative that passes flagged spots.
+5. Back in **Briefing**, click **Approve and send**. In local mode it says nothing was sent because no alert channel is connected.
+6. Click **Check against recorded rain**, then open **Track record** to show alerts compared with the rain that was recorded, and the KPI updating.
+7. Click **Storm drill** to show red (high risk) spots. Say that it is synthetic, not real weather.
 
 ## Assumptions and limitations
 
-- The eight locations, their coordinates, thresholds, and generic route review prompts are unverified demo inputs. No alternative route is asserted safe.
+- The 26 locations, their coordinates, thresholds, and generic route review prompts are unverified demo inputs. No alternative route is asserted safe.
 - Historical forecast data is not a record of what a dispatcher actually received at the historical time. Archive fallback is labelled as such.
 - A small local model writes plain but sometimes imprecise prose. Its reasoning is shown as an "Agent note" after the computed reasoning, and it never controls numbers, risk levels, flagged locations, or the Hindi text.
+- Route check depends on the public OSRM demo servers, uses approximate place coordinates, ignores traffic, and measures straight-line distance from a route to a spot.
 - Open Meteo availability, coverage, map tiles, fonts, internet connectivity, Bedrock model access, SNS subscriptions, and AWS permissions are external dependencies.
 - The prototype does not authenticate dispatcher users, measure on-road conditions, ingest official closures, or establish hydraulic flood depth or ground truth.
 - For a local demo without provider connectivity, use the explicit synthetic option. Synthetic and archive demonstration forecasts cannot be verified or used to calibrate thresholds; use a historical forecast assessment instead.

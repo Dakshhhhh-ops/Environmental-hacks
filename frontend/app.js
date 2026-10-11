@@ -263,7 +263,7 @@ async function start() {
     state.spots = spots.spots || []; state.places = places.places || [];
     $('#sourceStatus').innerHTML = `<i style="background:${health.openmeteo_reachable ? COLORS.green : COLORS.red}"></i> ${health.openmeteo_reachable ? 'WEATHER ONLINE' : 'WEATHER OFFLINE'} · STRANDS AGENT · ${esc(String(health.agent_provider || '').toUpperCase())}`;
     const opts = state.places.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
-    $('#fromSel').innerHTML = opts; $('#toSel').innerHTML = opts; $('#fromSel').value = 'aiims'; $('#toSel').value = 'isbt_kg';
+    $('#fromSel').innerHTML = opts; $('#toSel').innerHTML = opts; $('#fromSel').value = 'nzm'; $('#toSel').value = 'du_north';
     renderAll(); await loadHistory();
   } catch (e) {
     $('#sourceStatus').innerHTML = `<i style="background:${COLORS.red}"></i> BACKEND UNAVAILABLE`;
