@@ -140,3 +140,23 @@ def test_external_weather_failure_marks_data_unavailable_and_blocks_proposal(tmp
     assert len(result["spots"]) == len(load_spots()) == SPOT_COUNT
     assert all(not spot["data_available"] for spot in result["spots"])
     assert client.post("/api/proposals", json={"mode": "replay", "date": "2025-05-01"}).status_code == 503
+
+
+def test_driver_advisory_shows_only_approved_alerts(tmp_path, monkeypatch):
+    monkeypatch.setattr(storage_module.settings, "local_data_dir", str(tmp_path))
+    monkeypatch.setattr(storage_module, "_storage", None)
+    monkeypatch.delenv("SNS_TOPIC_ARN", raising=False)
+    from backend.app.api import routes
+    from backend.app.services.bedrock import build_fallback_proposal
+    async def template(assessments, window_start, window_end, *args, **kwargs):
+        return build_fallback_proposal(assessments, window_start, window_end), "fallback", "test stub"
+    monkeypatch.setattr(routes, "generate_proposal", template)
+    client = TestClient(app)
+    assert client.get("/api/advisory").json() == {"active": False}
+    proposal = client.post("/api/proposals", json={"mode": "replay", "date": "2025-05-01", "synthetic": True}).json()
+    assert proposal["flagged_spots"], "synthetic drill should flag spots"
+    assert client.get("/api/advisory").json() == {"active": False}, "a draft must not reach drivers"
+    assert client.post(f"/api/proposals/{proposal['id']}/approve").status_code == 200
+    advisory = client.get("/api/advisory").json()
+    assert advisory["active"] and advisory["kind"] == "drill"
+    assert len(advisory["flagged"]) == len(proposal["flagged_spots"]) and advisory["flagged"][0]["name"]

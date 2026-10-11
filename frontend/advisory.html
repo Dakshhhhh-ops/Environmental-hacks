@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a0c0d"><title>Driver advisory | Sentinel</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{--bg:#0a0c0d;--panel:#111416;--line:#242a2e;--text:#f4f6f5;--muted:#8d979b;--mint:#7ff0c3;--amber:#f2b94b;--red:#ff6570}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:"Inter Tight","Noto Sans Devanagari",system-ui,sans-serif;font-size:17px;line-height:1.5}
+    main{max-width:620px;margin:0 auto;padding:18px 16px 48px}
+    header{display:flex;justify-content:space-between;align-items:center;margin-bottom:18px}
+    .logo{font-size:22px;font-weight:500;letter-spacing:-.04em;display:inline-flex;align-items:flex-end;gap:5px}
+    .logo i{width:8px;height:8px;background:var(--mint);margin-bottom:6px;box-shadow:5px 5px 0 0 #fff}
+    .lang{display:flex;padding:3px;border:1px solid var(--line);border-radius:999px}
+    .lang button{border:0;background:none;color:var(--muted);font:inherit;font-size:14px;padding:6px 14px;border-radius:999px;cursor:pointer}
+    .lang button.active{background:#fff;color:#0a0c0d;font-weight:600}
+    .note{border:1px dashed var(--amber);color:var(--amber);border-radius:14px;padding:10px 14px;font-size:14px;margin-bottom:14px}
+    .banner{border-radius:20px;padding:22px 20px;margin-bottom:14px;border:1px solid var(--line);background:var(--panel)}
+    .banner.red{background:var(--red);color:#1a0306;border-color:var(--red)}
+    .banner.amber{background:var(--amber);color:#1c1300;border-color:var(--amber)}
+    .banner.green{border-color:var(--mint)}
+    .banner h1{margin:0;font-size:30px;line-height:1.15;letter-spacing:-.03em;font-weight:600}
+    .banner p{margin:8px 0 0;font-size:15px;opacity:.9}
+    h2{font-size:14px;letter-spacing:.06em;color:var(--muted);font-weight:600;margin:22px 0 8px}
+    .spot{border:1px solid var(--line);border-left-width:5px;border-radius:14px;padding:13px 14px;margin-bottom:8px;background:var(--panel)}
+    .spot.red{border-left-color:var(--red)}.spot.amber{border-left-color:var(--amber)}
+    .spot b{display:block;font-size:18px;font-weight:600}
+    .spot span{font-size:14px;color:var(--muted)}
+    .spot em{font-style:normal;font-size:12px;font-weight:700;border-radius:999px;padding:2px 9px;margin-left:8px;vertical-align:middle;background:var(--red);color:#1a0306}
+    .do{font-size:16px;margin:4px 0 12px}
+    footer{color:var(--muted);font-size:13px;margin-top:26px;border-top:1px solid var(--line);padding-top:14px}
+    [hidden]{display:none!important}
+  </style>
+</head>
+<body>
+<main>
+  <header><span class="logo">Sentinel<i></i></span><div class="lang"><button data-lang="hi" class="active">हिन्दी</button><button data-lang="en">English</button></div></header>
+  <div id="note" class="note" hidden></div>
+  <section id="banner" class="banner"><h1 id="headline">…</h1><p id="sub"></p></section>
+  <div id="lists"></div>
+  <footer id="foot"></footer>
+</main>
+<script src="config.js"></script>
+<script>
+const API = `${window.SENTINEL_CONFIG?.apiBaseUrl || ''}/api`;
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const T = {
+  hi: {
+    none: 'अभी कोई चेतावनी जारी नहीं है', noneSub: 'डिस्पैचर द्वारा स्वीकृत चेतावनी यहाँ दिखेगी।',
+    red: (n) => `${n} स्थानों पर उच्च जोखिम`, amber: (n) => `${n} स्थानों पर सतर्कता`, clear: 'कोई स्थान चेतावनी स्तर पर नहीं',
+    valid: 'मान्य', approved: 'डिस्पैचर ने स्वीकृत किया', avoid: 'अभी न जाएँ', check: 'जाने से पहले जाँचें',
+    doRed: 'इन रास्तों से अभी वाहन न ले जाएँ। डिस्पैचर की पुष्टि का इंतज़ार करें।', doAmber: 'इन रास्तों पर जाने से पहले डिस्पैचर से स्थिति पूछें।',
+    now: 'बारिश जारी', replay: 'यह पिछले दिन का रीप्ले है, आज की चेतावनी नहीं।', drill: 'यह अभ्यास (ड्रिल) है, असली मौसम नहीं।',
+    foot: 'यह अनुमान बारिश पर आधारित है, सड़क पर पानी की पुष्टि नहीं। सीमाएँ अनुमानित हैं। रास्ते की स्थिति खुद भी देखें और डिस्पैचर को बताएँ।', zone: 'दिल्ली',
+  },
+  en: {
+    none: 'No advisory is active', noneSub: 'An alert appears here once a dispatcher approves it.',
+    red: (n) => `High risk at ${n} location${n > 1 ? 's' : ''}`, amber: (n) => `Watch at ${n} location${n > 1 ? 's' : ''}`, clear: 'No location is at warning level',
+    valid: 'Valid', approved: 'Approved by dispatcher', avoid: 'Do not go now', check: 'Check before you go',
+    doRed: 'Do not drive through these now. Wait for the dispatcher to confirm.', doAmber: 'Ask the dispatcher about conditions before taking these.',
+    now: 'RAIN NOW', replay: 'This is a replay of a past day, not a warning for today.', drill: 'This is a drill, not real weather.',
+    foot: 'This estimate is based on rainfall, not on confirmed water on the road. Limits are estimates. Check the road yourself and report conditions to the dispatcher.', zone: 'Delhi',
+  },
+};
+const ZONES_HI = { Central: 'मध्य', North: 'उत्तरी', South: 'दक्षिणी', East: 'पूर्वी', West: 'पश्चिमी', 'South East': 'दक्षिण-पूर्वी', 'South West': 'दक्षिण-पश्चिमी', 'North West': 'उत्तर-पश्चिमी' };
+let lang = 'hi', data = null;
+const hhmm = (iso) => String(iso || '').slice(11, 16);
+const day = (iso) => { const d = new Date(`${String(iso).slice(0, 10)}T00:00:00`); return isNaN(d) ? '' : d.toLocaleDateString(lang === 'hi' ? 'hi-IN' : 'en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); };
+function render() {
+  const t = T[lang]; document.documentElement.lang = lang;
+  document.querySelectorAll('[data-lang]').forEach((b) => b.classList.toggle('active', b.dataset.lang === lang));
+  const banner = document.querySelector('#banner'), lists = document.querySelector('#lists'), note = document.querySelector('#note');
+  document.querySelector('#foot').textContent = t.foot;
+  if (!data || !data.active) { banner.className = 'banner'; note.hidden = true; lists.innerHTML = ''; document.querySelector('#headline').textContent = t.none; document.querySelector('#sub').textContent = t.noneSub; return; }
+  note.hidden = !(data.kind === 'replay' || data.kind === 'drill'); note.textContent = data.kind === 'drill' ? t.drill : t.replay;
+  const red = data.flagged.filter((f) => f.risk_level === 'red'), amber = data.flagged.filter((f) => f.risk_level === 'amber');
+  banner.className = `banner ${red.length ? 'red' : amber.length ? 'amber' : 'green'}`;
+  document.querySelector('#headline').textContent = red.length ? t.red(red.length) : amber.length ? t.amber(amber.length) : t.clear;
+  document.querySelector('#sub').textContent = `${t.valid}: ${day(data.window_start)}, ${hhmm(data.window_start)}–${hhmm(data.window_end)} · ${t.approved}`;
+  const block = (items, title, action, cls) => items.length ? `<h2>${title} (${items.length})</h2><p class="do">${action}</p>` + items.map((f) => `<div class="spot ${cls}"><b>${esc(f.name)}${f.rain_now ? `<em>${t.now}</em>` : ''}</b><span>${esc(lang === 'hi' ? (ZONES_HI[f.zone] || f.zone || '') : (f.zone || ''))} ${t.zone}</span></div>`).join('') : '';
+  lists.innerHTML = block(red, t.avoid, t.doRed, 'red') + block(amber, t.check, t.doAmber, 'amber');
+}
+async function load() {
+  try { const r = await fetch(`${API}/advisory`); data = r.ok ? await r.json() : null; } catch { data = null; }
+  render();
+}
+document.querySelectorAll('[data-lang]').forEach((b) => { b.onclick = () => { lang = b.dataset.lang; render(); }; });
+load(); setInterval(load, 30000);
+</script>
+</body></html>

@@ -11,7 +11,7 @@ const BASE_H = 0.6, RING_H = 9;          // ring sits where peak equals threshol
 const YAMUNA = [[28.76, 77.225], [28.71, 77.232], [28.67, 77.243], [28.63, 77.256], [28.59, 77.272], [28.55, 77.305], [28.5, 77.33]];
 
 const project = (lat, lon) => new THREE.Vector3((lon - CENTER.lon) * KM_PER_DEG * Math.cos((CENTER.lat * Math.PI) / 180), 0, -(lat - CENTER.lat) * KM_PER_DEG);
-const heightFor = (a) => (a?.data_available ? BASE_H + Math.min(a.risk_ratio, 1.7) * (RING_H - BASE_H) : BASE_H);
+const heightFor = (a) => (a?.data_available ? BASE_H + Math.min(a.risk_ratio, 1.45) * (RING_H - BASE_H) : BASE_H);
 
 export function createScene(container) {
   const scene = new THREE.Scene();

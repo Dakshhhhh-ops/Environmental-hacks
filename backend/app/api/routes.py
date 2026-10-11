@@ -57,12 +57,17 @@ def _parse_date(date_str: str) -> None:
 async def health():
     from ..config import settings
     # Check Open-Meteo reachability (quick check)
-    openmeteo_ok = True
-    try:
-        import urllib.request
-        urllib.request.urlopen("https://api.open-meteo.com/v1/forecast?latitude=28.6&longitude=77.2&hourly=precipitation", timeout=5)
-    except Exception:
-        openmeteo_ok = False
+    import urllib.request
+
+    def _reachable() -> bool:
+        try:
+            urllib.request.urlopen("https://api.open-meteo.com/v1/forecast?latitude=28.6&longitude=77.2&hourly=precipitation&forecast_days=1", timeout=8)
+            return True
+        except Exception:
+            return False
+
+    # Off the event loop, so a slow weather provider cannot stall other requests.
+    openmeteo_ok = await asyncio.get_running_loop().run_in_executor(None, _reachable)
 
     bedrock_cfg = False
     if os.environ.get("BEDROCK_MODEL_ID"):
@@ -219,6 +224,36 @@ async def get_risk(
         "generated_at": _now_iso(),
         "provider_used": provider,
         "error": err,
+    }
+
+
+# --- Driver advisory ---
+
+@router.get("/advisory")
+async def get_advisory():
+    """The most recently approved alert, reduced to what a driver needs. Unapproved drafts never appear here."""
+    published = [p for p in get_storage().list_proposals() if p.get("status") == "published" and p.get("published_at")]
+    if not published:
+        return {"active": False}
+    latest = max(published, key=lambda p: p["published_at"])
+    spots = {s["id"]: s for s in load_spots()}
+    assessments = {a.get("spot_id"): a for a in latest.get("assessments", [])}
+    source = next(iter(assessments.values()), {}).get("data_source")
+    return {
+        "active": True,
+        "kind": "drill" if source == "synthetic" else "replay" if latest.get("mode") == "replay" else "live",
+        "published_at": latest["published_at"],
+        "window_start": latest.get("window_start"),
+        "window_end": latest.get("window_end"),
+        "flagged": [
+            {
+                "name": spots.get(f["spot_id"], {}).get("name", f["spot_id"]),
+                "zone": spots.get(f["spot_id"], {}).get("zone"),
+                "risk_level": f["risk_level"],
+                "rain_now": assessments.get(f["spot_id"], {}).get("trigger") == "recorded_rain",
+            }
+            for f in latest.get("flagged_spots", [])
+        ],
     }
 
 

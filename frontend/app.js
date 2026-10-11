@@ -20,6 +20,7 @@ async function request(path, options = {}) {
   if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `Request failed (${response.status})`);
   return body;
 }
+function setStatus(online) { $('#sourceStatus').innerHTML = `<i style="background:${online ? COLORS.green : COLORS.red}"></i> ${online ? 'WEATHER ONLINE' : 'WEATHER NOT RESPONDING'} · ${state.agentLabel || ''}`; }
 function toast(message) { const el = $('#toast'); el.textContent = message; el.style.display = 'block'; clearTimeout(toast.timer); toast.timer = setTimeout(() => { el.style.display = 'none'; }, 5000); }
 function busy(title, notes = []) {
   clearInterval(busy.timer);
@@ -109,7 +110,7 @@ function renderAll() { renderMarkers(); renderKpis(); renderTable(); if (state.s
 async function setView(view) {
   const is3d = view === '3d';
   if (is3d && !state.scene) {
-    try { const { createScene } = await import('./scene3d.js?v=9'); state.scene = createScene($('#scene3d')); }
+    try { const { createScene } = await import('./scene3d.js?v=11'); state.scene = createScene($('#scene3d')); }
     catch (e) { toast('3D view could not load on this device.'); return; }
   }
   $('#scene3d').hidden = !is3d; $('#sceneHint').hidden = !is3d; $('.map-wrap').classList.toggle('is3d', is3d);
@@ -169,7 +170,7 @@ function renderProposal() {
   const trace = p.agent_trace
     ? `<div class="trace"><b>Drafted by ${esc(p.agent_trace.framework)}</b> · ${esc(p.agent_trace.provider)} / ${esc(p.agent_trace.model)}<br>Tools the agent called: ${(p.agent_trace.tools_called || []).map((t) => `<code>${esc(t)}</code>`).join('')}<br>Rain values, risk levels and the Hindi text come from the rule engine, never from the model.</div>`
     : `<div class="trace">${noFlags ? 'Nothing was flagged, so no AI draft was needed. This is the standard all-clear text.' : `Standard template used. ${esc(p.fallback_reason || '')}`}</div>`;
-  const delivery = p.delivery_state ? `<div class="delivery">${p.delivery_state === 'local-skipped' ? 'Approved and recorded. No alert channel is connected in local mode, so nothing was sent.' : `Delivery: ${esc(p.delivery_state)}`}${p.delivery_error ? ` · ${esc(p.delivery_error)}` : ''}</div>` : '';
+  const delivery = p.delivery_state ? `<div class="delivery">${p.delivery_state === 'local-skipped' ? 'Approved and published to the <a href="advisory.html" target="_blank" rel="noopener">driver advisory page</a>. No email channel is connected in local mode, so no email was sent.' : `Delivery: ${esc(p.delivery_state)}`}${p.delivery_error ? ` · ${esc(p.delivery_error)}` : ''}</div>` : '';
   const source = state.assessments[0]?.data_source;
   const verifiable = p.mode === 'replay' && ['replay_day_ahead_forecast', 'replay_historical_forecast'].includes(source);
   const canVerify = p.status === 'published' && verifiable;
@@ -193,7 +194,7 @@ async function transition(action) {
   try {
     const result = await request(`/proposals/${encodeURIComponent(state.proposal.id)}/${action}`, { method: 'POST' });
     if (action === 'verify') { state.proposal.verified = true; await loadHistory(); toast('Compared with recorded rain. See Track record.'); }
-    else { Object.assign(state.proposal, result); toast(action === 'approve' ? 'Alert approved.' : 'Draft rejected. Nothing was sent.'); }
+    else { Object.assign(state.proposal, result); toast(action === 'approve' ? 'Alert approved and published to the driver advisory page.' : 'Draft rejected. Nothing was published.'); }
     renderProposal();
   } catch (e) { toast(e.message); }
 }
@@ -206,7 +207,8 @@ async function runAssessment() {
     const body = { mode: state.synthetic ? 'replay' : state.mode, synthetic: state.synthetic };
     if (body.mode === 'replay') { body.date = date; body.as_of_hour = state.synthetic ? 0 : Number($('#hourSel').value); }
     const result = await request('/proposals', { method: 'POST', body: JSON.stringify(body) });
-    state.proposal = result; state.assessments = result.assessments || []; state.routes = null; clearRoutes(); $('#routeResult').innerHTML = '';
+    state.proposal = result; state.assessments = result.assessments || [];
+    if (!state.synthetic) setStatus(true); state.routes = null; clearRoutes(); $('#routeResult').innerHTML = '';
     const flaggedCount = state.assessments.filter((a) => a.data_available && a.risk_level !== 'green').length;
     const nowCount = state.assessments.filter(recorded).length;
     $('#mapTitle').textContent = flaggedCount ? `${flaggedCount} low point${flaggedCount > 1 ? 's' : ''} need attention${nowCount ? ` · rain already falling at ${nowCount}` : ''}` : 'No low point reached watch level';
@@ -331,7 +333,8 @@ async function start() {
   try {
     const [health, spots, places] = await Promise.all([request('/health'), request('/spots'), request('/places')]);
     state.spots = spots.spots || []; state.places = places.places || [];
-    $('#sourceStatus').innerHTML = `<i style="background:${health.openmeteo_reachable ? COLORS.green : COLORS.red}"></i> ${health.openmeteo_reachable ? 'WEATHER ONLINE' : 'WEATHER OFFLINE'} · STRANDS AGENT · ${esc(String(health.agent_provider || '').toUpperCase())}`;
+    state.agentLabel = `STRANDS AGENT · ${esc(String(health.agent_provider || '').toUpperCase())}`;
+    setStatus(health.openmeteo_reachable);
     const opts = state.places.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
     $('#fromSel').innerHTML = opts; $('#toSel').innerHTML = opts; $('#fromSel').value = 'nzm'; $('#toSel').value = 'du_north';
     renderAll(); await loadHistory(); loadBacktest();
