@@ -16,7 +16,7 @@ Globals:
   Function:
     Runtime: python3.13
     Timeout: 29
-    MemorySize: 1024
+    MemorySize: 2048
 Resources:
   SentinelApi:
     Type: AWS::Serverless::HttpApi
@@ -60,6 +60,9 @@ Resources:
         Variables:
           USE_DYNAMODB: 'true'
           AGENT_PROVIDER: bedrock
+          # Below API Gateway's 30 second limit, so a slow model falls back to template text instead of an error.
+          AGENT_TIMEOUT_SECONDS: '12'
+          OPENMETEO_TIMEOUT_SECONDS: '8'
           BEDROCK_REGION: !Ref BedrockRegion
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           DYNAMODB_PROPOSALS_TABLE: !Ref ProposalsTable

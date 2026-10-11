@@ -82,6 +82,7 @@ def parse_briefing(text: str, flagged_ids: set[str]) -> Briefing:
 
 # A small model loses the thread on long lists, so it sees only the worst few spots.
 MAX_SPOTS_FOR_MODEL = 5
+MAX_HISTORY_LOOKUPS = 2
 
 # Claims the data cannot support. Rainfall is the only input: nothing here observes water on the road.
 UNSUPPORTED_CLAIMS = ("water level", "flooded", "is flooding", "are flooding", "submerged", "inundated",
@@ -181,6 +182,9 @@ def _run_agent(flagged: list[dict], window_start: str, window_end: str, data_sou
         Args:
             spot_id: A spot_id returned by get_flagged_spots.
         """
+        # Two lookups are enough for a briefing and keep the request inside API Gateway's 30 second limit.
+        if sum(t.startswith("get_calibration_history") for t in tools_called) >= MAX_HISTORY_LOOKUPS:
+            return json.dumps({"note": "history lookup limit reached; write the briefing now"})
         tools_called.append(f"get_calibration_history:{spot_id}")
         if spot_id not in flagged_ids:
             return json.dumps({"error": f"{spot_id} is not a flagged spot"})

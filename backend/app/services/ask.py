@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import os
 from typing import Optional
 
 from .agent import _build_model, agent_model_id, agent_provider
@@ -221,12 +222,13 @@ def keyword_route(question: str, box: Toolbox) -> tuple[dict, str]:
     return box.network(), "network_status"
 
 
-async def ask(question: str, assessments: list[dict], timeout: float = 60) -> dict:
+async def ask(question: str, assessments: list[dict], timeout: Optional[float] = None) -> dict:
     """Answer a dispatcher question. The agent chooses the lookup; code writes the answer."""
     trace = {"framework": "Strands Agents SDK", "provider": agent_provider(), "model": agent_model_id(), "tools_called": []}
     if not assessments:
         return {"answer": summarize([]), "routed_by": "none", "reason": "no assessment has been run", "agent_trace": trace}
     reason = None
+    timeout = timeout or float(os.environ.get("AGENT_TIMEOUT_SECONDS", "60"))
     try:
         loop = asyncio.get_running_loop()
         result, calls = await asyncio.wait_for(loop.run_in_executor(None, _run, question, assessments), timeout=timeout)
