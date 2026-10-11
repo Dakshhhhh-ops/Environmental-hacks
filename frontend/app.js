@@ -9,6 +9,8 @@ const COLORS = { green: '#54d6a0', amber: '#f2b94b', red: '#ff6570', idle: '#5c6
 const LABELS = { green: 'LOW', amber: 'WATCH', red: 'HIGH' };
 const RANK = { red: 0, amber: 1, green: 2 };
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const SOURCES = { live: 'Live forecast', replay_day_ahead_forecast: 'Day-ahead forecast replay', replay_historical_forecast: 'Historical forecast replay', replay_archive_fallback: 'Recorded rain shown as a stand-in: no day-ahead forecast exists before 2024', synthetic: 'Synthetic storm drill, not real weather' };
+const recorded = (a) => a?.trigger === 'recorded_rain';
 const hhmm = (iso) => (iso ? String(iso).slice(11, 16) : '—');
 const niceDate = (iso) => { const d = new Date(`${String(iso).slice(0, 10)}T00:00:00`); return isNaN(d) ? iso : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); };
 
@@ -55,7 +57,7 @@ function renderMarkers() {
     const icon = L.divIcon({ className: '', html: `<div class="marker ${cls}"></div>`, iconSize: [size, size], iconAnchor: [size / 2, size / 2] });
     const marker = L.marker([spot.lat, spot.lon], { icon, zIndexOffset: cls === 'red' ? 600 : cls === 'amber' ? 300 : 0 }).addTo(state.map);
     const detail = a?.data_available
-      ? `<span class="risk-text ${a.risk_level}"><b>${LABELS[a.risk_level]}</b></span> · peak ${a.peak_precipitation_mm_hr} mm/hr at ${hhmm(a.peak_time)}<br>${Math.round(a.risk_ratio * 100)}% of the ${spot.threshold_mm_hr} mm/hr estimated threshold<br>${sparkline(a, spot, 190, 44)}`
+      ? `<span class="risk-text ${a.risk_level}"><b>${LABELS[a.risk_level]}</b></span> · ${recorded(a) ? `${a.recent_peak_mm_hr} mm/hr already recorded at ${hhmm(a.recent_peak_time)}` : `forecast peak ${a.peak_precipitation_mm_hr} mm/hr at ${hhmm(a.peak_time)}`}<br>${Math.round(a.risk_ratio * 100)}% of the ${spot.threshold_mm_hr} mm/hr estimated limit${recorded(a) ? `<br><span class="muted">The forecast alone said ${a.peak_precipitation_mm_hr} mm/hr</span>` : ''}<br>${sparkline(a, spot, 190, 44)}`
       : `Estimated threshold ${spot.threshold_mm_hr} mm/hr<br><span class="muted">${a ? 'No rainfall data for this spot' : 'Not assessed yet'}</span>`;
     marker.bindPopup(`<b>${esc(spot.name)}</b><br><span class="muted">${esc(spot.zone || '')} Delhi</span><br>${detail}`);
     state.markers[spot.id] = marker;
@@ -72,9 +74,12 @@ function renderKpis() {
   $('#kpiRed').textContent = avail.length ? avail.filter((a) => a.risk_level === 'red').length : '—';
   $('#kpiAmber').textContent = avail.length ? avail.filter((a) => a.risk_level === 'amber').length : '—';
   if (avail.length) {
-    const top = avail.reduce((m, a) => (a.peak_precipitation_mm_hr > m.peak_precipitation_mm_hr ? a : m));
-    $('#kpiPeak').textContent = `${top.peak_precipitation_mm_hr} mm/hr`;
-    $('#kpiPeakWhere').textContent = `${top.spot_name}, ${hhmm(top.peak_time)}`;
+    const best = (a) => Math.max(a.peak_precipitation_mm_hr, a.recent_peak_mm_hr || 0);
+    const top = avail.reduce((m, a) => (best(a) > best(m) ? a : m));
+    const isRecorded = (top.recent_peak_mm_hr || 0) > top.peak_precipitation_mm_hr;
+    $('#kpiPeak').textContent = `${best(top)} mm/hr`;
+    $('#kpiPeakLabel').textContent = isRecorded ? 'PEAK RAIN · ALREADY RECORDED' : 'PEAK RAIN · FORECAST';
+    $('#kpiPeakWhere').textContent = `${top.spot_name}, ${hhmm(isRecorded ? top.recent_peak_time : top.peak_time)}`;
   } else { $('#kpiPeak').textContent = '—'; $('#kpiPeakWhere').textContent = 'run an assessment'; }
   const judged = state.history.filter((r) => ['true_alarm', 'false_alarm', 'missed_event'].includes(r.outcome));
   const good = judged.filter((r) => r.outcome === 'true_alarm').length;
@@ -91,10 +96,10 @@ function renderTable() {
     const ok = a?.data_available;
     const pct = ok ? Math.min(150, Math.round(a.risk_ratio * 100)) : 0;
     const meter = ok
-      ? `<span class="meter"><i style="width:${(pct / 150) * 100}%;background:${COLORS[a.risk_level]}"></i><u style="left:${(100 / 150) * 100}%"></u></span><span class="meter-label">${a.peak_precipitation_mm_hr} / ${s.threshold_mm_hr} mm/hr</span>`
+      ? `<span class="meter"><i style="width:${(pct / 150) * 100}%;background:${COLORS[a.risk_level]}"></i><u style="left:${(100 / 150) * 100}%"></u></span><span class="meter-label">${recorded(a) ? `${a.recent_peak_mm_hr} recorded` : a.peak_precipitation_mm_hr} / ${s.threshold_mm_hr} mm/hr</span>`
       : `<span class="muted">threshold ${s.threshold_mm_hr} mm/hr</span>`;
-    const pill = ok ? `<span class="pill ${a.risk_level}">${LABELS[a.risk_level]}</span>` : `<span class="pill">${a ? 'NO DATA' : 'NOT ASSESSED'}</span>`;
-    return `<tr data-id="${esc(s.id)}" tabindex="0"><td><b>${esc(s.name)}</b></td><td class="muted">${esc(s.zone || '—')}</td><td>${pill}</td><td>${meter}</td><td>${sparkline(a, s)}</td><td class="muted">${ok ? hhmm(a.peak_time) : '—'}</td></tr>`;
+    const pill = ok ? `<span class="pill ${a.risk_level}">${LABELS[a.risk_level]}</span>${recorded(a) ? `<span class="pill now ${a.risk_level}">RAIN NOW</span>` : ''}` : `<span class="pill">${a ? 'NO DATA' : 'NOT ASSESSED'}</span>`;
+    return `<tr data-id="${esc(s.id)}" tabindex="0"><td><b>${esc(s.name)}</b></td><td class="muted">${esc(s.zone || '—')}</td><td>${pill}</td><td>${meter}</td><td>${sparkline(a, s)}</td><td class="muted">${ok ? hhmm(recorded(a) ? a.recent_peak_time : a.peak_time) : '—'}</td></tr>`;
   }).join('') || `<tr><td colspan="6" class="loading">${state.filter === 'flagged' ? 'No flagged locations in this assessment.' : 'No locations available.'}</td></tr>`;
   $$('#spotRows tr[data-id]').forEach((tr) => { tr.onclick = () => focusSpot(tr.dataset.id); tr.onkeydown = (e) => { if (e.key === 'Enter') focusSpot(tr.dataset.id); }; });
 }
@@ -104,7 +109,7 @@ function renderAll() { renderMarkers(); renderKpis(); renderTable(); if (state.s
 async function setView(view) {
   const is3d = view === '3d';
   if (is3d && !state.scene) {
-    try { const { createScene } = await import('./scene3d.js?v=7'); state.scene = createScene($('#scene3d')); }
+    try { const { createScene } = await import('./scene3d.js?v=9'); state.scene = createScene($('#scene3d')); }
     catch (e) { toast('3D view could not load on this device.'); return; }
   }
   $('#scene3d').hidden = !is3d; $('#sceneHint').hidden = !is3d; $('.map-wrap').classList.toggle('is3d', is3d);
@@ -157,14 +162,18 @@ function renderProposal() {
   const p = state.proposal;
   if (!p) return emptyBriefing('No assessment yet', 'Run an assessment to compare the rain forecast with each low point and get a draft alert to review.');
   const names = Object.fromEntries(state.spots.map((s) => [s.id, s.name]));
-  const flagged = (p.flagged_spots || []).slice().sort((a, b) => RANK[a.risk_level] - RANK[b.risk_level]).map((s) => `<div class="flag-row ${esc(s.risk_level)}"><b>${esc(names[s.spot_id] || s.spot_id)} <span class="risk-text ${esc(s.risk_level)}">${LABELS[s.risk_level] || ''}</span></b><small>Peak ${esc(s.peak_mm_hr)} mm/hr at ${hhmm(s.peak_time)} · ${esc(s.recommended_action)}</small></div>`).join('') || '<div class="flag-row"><small>No location reached the watch level in this window.</small></div>';
+  const lookup = byId();
+  const flagged = (p.flagged_spots || []).slice().sort((a, b) => RANK[a.risk_level] - RANK[b.risk_level]).map((s) => `<div class="flag-row ${esc(s.risk_level)}"><b>${esc(names[s.spot_id] || s.spot_id)} <span class="risk-text ${esc(s.risk_level)}">${LABELS[s.risk_level] || ''}</span></b><small>${recorded(lookup[s.spot_id]) ? `${esc(lookup[s.spot_id].recent_peak_mm_hr)} mm/hr already recorded at ${hhmm(lookup[s.spot_id].recent_peak_time)}` : `Forecast peak ${esc(s.peak_mm_hr)} mm/hr at ${hhmm(s.peak_time)}`} · ${esc(s.recommended_action)}</small></div>`).join('') || '<div class="flag-row"><small>No location reached the watch level in this window.</small></div>';
   const agent = p.generated_by !== 'fallback';
   const noFlags = !(p.flagged_spots || []).length;
   const trace = p.agent_trace
     ? `<div class="trace"><b>Drafted by ${esc(p.agent_trace.framework)}</b> · ${esc(p.agent_trace.provider)} / ${esc(p.agent_trace.model)}<br>Tools the agent called: ${(p.agent_trace.tools_called || []).map((t) => `<code>${esc(t)}</code>`).join('')}<br>Rain values, risk levels and the Hindi text come from the rule engine, never from the model.</div>`
     : `<div class="trace">${noFlags ? 'Nothing was flagged, so no AI draft was needed. This is the standard all-clear text.' : `Standard template used. ${esc(p.fallback_reason || '')}`}</div>`;
   const delivery = p.delivery_state ? `<div class="delivery">${p.delivery_state === 'local-skipped' ? 'Approved and recorded. No alert channel is connected in local mode, so nothing was sent.' : `Delivery: ${esc(p.delivery_state)}`}${p.delivery_error ? ` · ${esc(p.delivery_error)}` : ''}</div>` : '';
-  const canVerify = p.status === 'published' && p.mode === 'replay' && !state.synthetic;
+  const source = state.assessments[0]?.data_source;
+  const verifiable = p.mode === 'replay' && ['replay_day_ahead_forecast', 'replay_historical_forecast'].includes(source);
+  const canVerify = p.status === 'published' && verifiable;
+  const noVerifyNote = p.status === 'published' && p.mode === 'replay' && !verifiable ? '<div class="delivery">This run has no genuine earlier forecast, so it cannot be checked against recorded rain.</div>' : '';
   $('#proposalArea').innerHTML = `<div class="proposal-card">
     <div class="proposal-status"><span class="badge ${esc(p.status)}">${esc(p.status === 'pending' ? 'AWAITING YOUR DECISION' : p.status.toUpperCase())}</span><span class="badge ${agent ? 'agent' : 'fallback'}">${agent ? 'AI AGENT DRAFT' : noFlags ? 'ALL CLEAR' : 'TEMPLATE'}</span></div>
     <h2>Draft alert for ${esc(niceDate(p.window_start))}, ${hhmm(p.window_start)}–${hhmm(p.window_end)}</h2>
@@ -173,7 +182,7 @@ function renderProposal() {
     <div class="reasoning">${esc(p.reasoning)}</div>
     <span class="eyebrow">FLAGGED LOCATIONS AND ACTIONS</span>${flagged}
     <div class="proposal-actions"><button class="approve" id="approveBtn" ${p.status !== 'pending' ? 'disabled' : ''}>Approve and send</button><button class="reject" id="rejectBtn" ${p.status !== 'pending' ? 'disabled' : ''}>Reject</button>${canVerify ? `<button id="verifyBtn" ${p.verified ? 'disabled' : ''}>${p.verified ? 'Checked against recorded rain' : 'Check against recorded rain'}</button>` : ''}<button id="toRouteBtn">Check a route</button></div>
-    ${delivery}${trace}</div>`;
+    ${delivery}${noVerifyNote}${trace}</div>`;
   $$('[data-lang]').forEach((b) => { b.onclick = () => { state.lang = b.dataset.lang; renderProposal(); }; });
   $('#approveBtn').onclick = () => transition('approve');
   $('#rejectBtn').onclick = () => transition('reject');
@@ -191,16 +200,17 @@ async function transition(action) {
 async function runAssessment() {
   const btn = $('#runBtn'); btn.disabled = true;
   const date = $('#dateInput').value;
-  busy(state.synthetic ? 'Running storm drill…' : state.mode === 'live' ? 'Reading the live forecast…' : `Replaying ${niceDate(date)}…`, [
-    `Fetching hourly rain for ${state.spots.length} low points`, 'Comparing each peak with its threshold', 'AI agent is reading the assessment and past alert outcomes', 'Drafting the alert for your review', 'Still working. A small local model takes a little longer.']);
+  busy(state.synthetic ? 'Running storm drill…' : state.mode === 'live' ? 'Reading the live forecast…' : `Replaying ${niceDate(date)} as of ${$('#hourSel').value.padStart(2, '0')}:00…`, [
+    `Fetching forecast and recorded rain for ${state.spots.length} low points`, 'Comparing each with its limit', 'AI agent is reading the assessment and past alert outcomes', 'Drafting the alert for your review', 'Still working. A small local model takes a little longer.']);
   try {
     const body = { mode: state.synthetic ? 'replay' : state.mode, synthetic: state.synthetic };
-    if (body.mode === 'replay') body.date = date;
+    if (body.mode === 'replay') { body.date = date; body.as_of_hour = state.synthetic ? 0 : Number($('#hourSel').value); }
     const result = await request('/proposals', { method: 'POST', body: JSON.stringify(body) });
     state.proposal = result; state.assessments = result.assessments || []; state.routes = null; clearRoutes(); $('#routeResult').innerHTML = '';
     const flaggedCount = state.assessments.filter((a) => a.data_available && a.risk_level !== 'green').length;
-    $('#mapTitle').textContent = flaggedCount ? `${flaggedCount} low point${flaggedCount > 1 ? 's' : ''} need attention` : 'No low point reached watch level';
-    $('#windowLabel').textContent = `${state.synthetic ? 'Synthetic storm drill, not real weather' : state.mode === 'live' ? 'Live forecast' : 'Historical forecast replay'} · ${niceDate(result.window_start)} ${hhmm(result.window_start)}–${hhmm(result.window_end)} IST`;
+    const nowCount = state.assessments.filter(recorded).length;
+    $('#mapTitle').textContent = flaggedCount ? `${flaggedCount} low point${flaggedCount > 1 ? 's' : ''} need attention${nowCount ? ` · rain already falling at ${nowCount}` : ''}` : 'No low point reached watch level';
+    $('#windowLabel').textContent = `${SOURCES[state.assessments[0]?.data_source] || 'Assessment'} · ${niceDate(result.window_start)} ${hhmm(result.window_start)}–${hhmm(result.window_end)} IST`;
     renderAll(); renderProposal(); showTab('brief');
     const flagged = state.assessments.filter((a) => a.data_available && a.risk_level !== 'green').map((a) => state.markers[a.spot_id]?.getLatLng()).filter(Boolean);
     if (flagged.length > 1) state.map.fitBounds(L.latLngBounds(flagged).pad(0.25));
@@ -269,6 +279,19 @@ async function loadHistory() {
   renderKpis();
 }
 
+async function loadBacktest() {
+  try {
+    const b = await request('/backtest');
+    const pct = (n, d) => (d ? Math.round((n / d) * 100) : 0);
+    $('#backtest').innerHTML = `<h3>Why two signals: ${b.days} monsoon days, ${b.spots} low points</h3>
+      <div class="legend"><span><i class="dot green"></i>Forecast warned in advance: <b>${b.caught_by_forecast}</b></span><span><i class="dot red"></i>Forecast missed: <b>${b.missed_by_forecast}</b></span></div>
+      <div class="bar"><i style="width:${pct(b.caught_by_forecast, b.events)}%;background:${COLORS.green}"></i><i style="width:${pct(b.missed_by_forecast, b.events)}%;background:${COLORS.red}"></i></div>
+      <p>Of <b>${b.events}</b> heavy-rain events in the 2024 and 2025 monsoons, the day-ahead forecast flagged <b>${pct(b.caught_by_forecast, b.events)}%</b> in advance. The rest are only caught once rain is already falling, which is why Sentinel watches both.</p>
+      <p>The forecast raised <b>${b.forecast_flags}</b> flags and <b>${b.false_alarms}</b> were false alarms. Worst miss: ${esc(b.worst_event.spot)} on ${esc(niceDate(b.worst_event.date))}, ${b.worst_event.recorded_mm_hr} mm/hr recorded against ${b.worst_event.forecast_mm_hr} forecast.</p>
+      <p>Recorded rain is a weather-model analysis, not a rain gauge. Limits are unverified estimates. Flooding is not measured.</p>`;
+  } catch { $('#backtest').hidden = true; }
+}
+
 /* ---------- wiring ---------- */
 function showTab(name) {
   $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
@@ -279,8 +302,8 @@ function setMode(mode, synthetic = false) {
   state.mode = mode; state.synthetic = synthetic;
   $('#liveBtn').classList.toggle('active', mode === 'live'); $('#replayBtn').classList.toggle('active', mode === 'replay');
   $('#replayControls').hidden = mode !== 'replay';
-  if (!$('#dateInput').value) $('#dateInput').value = '2023-07-09';
-  $$('.replay-controls .chip').forEach((c) => c.classList.toggle('active', synthetic ? !!c.dataset.synthetic : c.dataset.date === $('#dateInput').value));
+  if (!$('#dateInput').value) $('#dateInput').value = '2024-08-01';
+  $$('.replay-controls .chip').forEach((c) => c.classList.toggle('active', synthetic ? !!c.dataset.synthetic : c.dataset.date === $('#dateInput').value && c.dataset.hour === $('#hourSel').value));
 }
 async function subscribe() {
   const email = $('#emailInput').value.trim(); if (!email) return toast('Enter an email address first.');
@@ -288,17 +311,19 @@ async function subscribe() {
   catch (e) { $('#subscribeMsg').textContent = e.message; }
 }
 async function start() {
+  $('#hourSel').innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}">as of ${String(h).padStart(2, '0')}:00</option>`).join('');
   initMap(); setMode('live'); renderProposal(); motion();
   $('#view2d').onclick = () => setView('2d'); $('#view3d').onclick = () => setView('3d');
   $('#dateInput').max = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
   $('#dateInput').onchange = () => setMode('replay');
   $('#liveBtn').onclick = () => setMode('live'); $('#replayBtn').onclick = () => setMode('replay');
-  $$('.replay-controls .chip').forEach((c) => { c.onclick = () => { if (c.dataset.date) $('#dateInput').value = c.dataset.date; setMode('replay', !!c.dataset.synthetic); runAssessment(); }; });
+  $$('.replay-controls .chip').forEach((c) => { c.onclick = () => { if (c.dataset.date) { $('#dateInput').value = c.dataset.date; $('#hourSel').value = c.dataset.hour; } setMode('replay', !!c.dataset.synthetic); runAssessment(); }; });
+  $('#hourSel').onchange = () => setMode('replay');
   $('#runBtn').onclick = () => runAssessment(); $('#subscribeBtn').onclick = subscribe; $('#routeBtn').onclick = checkRoute;
   $('#swapBtn').onclick = () => { const a = $('#fromSel').value; $('#fromSel').value = $('#toSel').value; $('#toSel').value = a; };
   $$('.tab').forEach((t) => { t.onclick = () => showTab(t.dataset.tab); });
   const toApp = () => $('#app').scrollIntoView({ behavior: 'smooth' });
-  const replayStorm = () => { $('#dateInput').value = '2023-07-09'; setMode('replay'); toApp(); runAssessment(); };
+  const replayStorm = () => { $('#dateInput').value = '2024-07-31'; $('#hourSel').value = '20'; setMode('replay'); toApp(); runAssessment(); };
   $('#navOpen').onclick = toApp; $('#heroOpen').onclick = toApp; $('#navReplay').onclick = replayStorm; $('#heroReplay').onclick = replayStorm;
   $$('[data-goto]').forEach((a) => { a.addEventListener('click', () => showTab(a.dataset.goto)); });
   const onScroll = () => $('#nav').classList.toggle('solid', window.scrollY > 40); window.addEventListener('scroll', onScroll, { passive: true }); onScroll();
@@ -309,7 +334,7 @@ async function start() {
     $('#sourceStatus').innerHTML = `<i style="background:${health.openmeteo_reachable ? COLORS.green : COLORS.red}"></i> ${health.openmeteo_reachable ? 'WEATHER ONLINE' : 'WEATHER OFFLINE'} · STRANDS AGENT · ${esc(String(health.agent_provider || '').toUpperCase())}`;
     const opts = state.places.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
     $('#fromSel').innerHTML = opts; $('#toSel').innerHTML = opts; $('#fromSel').value = 'nzm'; $('#toSel').value = 'du_north';
-    renderAll(); await loadHistory();
+    renderAll(); await loadHistory(); loadBacktest();
   } catch (e) {
     $('#sourceStatus').innerHTML = `<i style="background:${COLORS.red}"></i> BACKEND UNAVAILABLE`;
     $('#spotRows').innerHTML = `<tr><td colspan="6" class="loading">Cannot reach the backend: ${esc(e.message)}. Start the API, then reload.</td></tr>`;
@@ -317,6 +342,6 @@ async function start() {
   }
   const q = new URLSearchParams(location.search);
   if (q.get('view') === '3d') await setView('3d');
-  if (q.get('replay')) { if (q.get('replay') === 'drill') setMode('replay', true); else { $('#dateInput').value = q.get('replay'); setMode('replay'); } await runAssessment(); if (q.get('route')) { showTab('route'); await checkRoute(); } }
+  if (q.get('replay')) { if (q.get('replay') === 'drill') setMode('replay', true); else { $('#dateInput').value = q.get('replay'); $('#hourSel').value = q.get('hour') || '0'; setMode('replay'); } await runAssessment(); if (q.get('route')) { showTab('route'); await checkRoute(); } }
 }
 start();

@@ -56,24 +56,6 @@ All thresholds are labelled as estimated and unverified (verified=false).
 FALLBACK_ENGLISH_TEMPLATE = (
     "Estimated Waterlogging Risk — {window_start} to {window_end}. "
     "Rainfall intensity is a proxy for potential waterlogging, not a confirmed flood prediction. "
-    "All thresholds are initial estimates (verified=false). "
-    "{flagged_summary} "
-    "Dispatcher review required before any alert is distributed."
-)
-
-FALLBACK_HINDI_TEMPLATE = (
-    "अनुमानित जलभराव जोखिम — {window_start} से {window_end} तक। "
-    "वर्षा की तीव्रता संभावित जलभराव का एक संकेत है, पुष्ट बाढ़ की भविष्यवाणी नहीं। "
-    "सभी सीमाएँ प्रारंभिक अनुमान हैं (verified=false)। "
-    "{flagged_summary_hi} "
-    "किसी भी चेतावनी को भेजने से पहले डिस्पैचर की समीक्षा आवश्यक है।"
-)
-
-# Re-declare these user-facing templates in UTF-8; legacy source text above was
-# mojibake and must never be shown as the deterministic fallback.
-FALLBACK_ENGLISH_TEMPLATE = (
-    "Estimated Waterlogging Risk — {window_start} to {window_end}. "
-    "Rainfall intensity is a proxy for potential waterlogging, not a confirmed flood prediction. "
     "All thresholds are initial estimates (verified=false). {flagged_summary} "
     "Dispatcher review required before any alert is distributed."
 )
@@ -97,9 +79,51 @@ def _build_flagged_payload(assessments: list[SpotAssessment]) -> list[dict]:
                 "peak_time": a.peak_time or a.assessment_window_start,
                 "threshold_mm_hr": a.threshold_mm_hr,
                 "risk_ratio": a.risk_ratio,
+                "trigger": a.trigger,
+                "recorded_peak_mm_hr": a.recent_peak_mm_hr if a.trigger == "recorded_rain" else None,
+                "recorded_peak_time": a.recent_peak_time if a.trigger == "recorded_rain" else None,
                 "alternate_route_hint": _get_hint(a.spot_id),
             })
     return flagged
+
+
+def nice_time(iso: Optional[str], with_date: bool = False) -> str:
+    """'2024-07-31T20:00' -> '20:00', or '31 Jul 2024, 20:00' with the date."""
+    try:
+        parsed = datetime.fromisoformat(iso)
+    except (TypeError, ValueError):
+        return iso or "unknown time"
+    return parsed.strftime("%d %b %Y, %H:%M").lstrip("0") if with_date else parsed.strftime("%H:%M")
+
+
+def describe_flag(a: SpotAssessment) -> str:
+    """One computed clause per flagged spot, naming the signal that flagged it."""
+    if a.trigger == "recorded_rain":
+        return (f"{a.spot_name} ({a.risk_level.value}, {a.recent_peak_mm_hr} mm/hr already recorded at "
+                f"{nice_time(a.recent_peak_time)}, threshold {a.threshold_mm_hr} mm/hr)")
+    return (f"{a.spot_name} ({a.risk_level.value}, forecast peak {a.peak_precipitation_mm_hr} mm/hr at "
+            f"{nice_time(a.peak_time)}, threshold {a.threshold_mm_hr} mm/hr)")
+
+
+HINDI_LEVEL = {RiskLevel.RED: "उच्च जोखिम", RiskLevel.AMBER: "सतर्कता"}
+HINDI_ACTION = {
+    RiskLevel.RED: "इन रास्तों से अभी वाहन न भेजें; डिस्पैचर की पुष्टि का इंतज़ार करें।",
+    RiskLevel.AMBER: "इन रास्तों पर वाहन भेजने से पहले स्थिति की जाँच करें।",
+}
+
+
+def hindi_summary(flagged: list[SpotAssessment]) -> str:
+    """Hindi list of flagged spots by level, with the action for each level. Place names stay as written."""
+    if not flagged:
+        return "इस अवधि में किसी स्थान ने अनुमानित एहतियाती सीमा पार नहीं की।"
+    parts: list[str] = []
+    if any(a.trigger == "recorded_rain" for a in flagged):
+        parts.append("बारिश अभी हो रही है; यह चेतावनी दर्ज की गई बारिश पर आधारित है।")
+    for level in (RiskLevel.RED, RiskLevel.AMBER):
+        names = [a.spot_name for a in flagged if a.risk_level == level]
+        if names:
+            parts.append(f"{HINDI_LEVEL[level]} ({len(names)}): " + ", ".join(names) + "। " + HINDI_ACTION[level])
+    return " ".join(parts)
 
 
 def _get_hint(spot_id: str) -> str:
@@ -228,33 +252,18 @@ def build_fallback_proposal(
 ) -> dict:
     """Deterministic template proposal — never pretends to be AI-generated."""
     flagged_a = [a for a in assessments if a.risk_level in (RiskLevel.AMBER, RiskLevel.RED)]
-    if not flagged_a:
-        flagged_summary = "No locations exceeded the estimated precautionary threshold in this window."
-        flagged_summary_hi = "इस अवधि में किसी भी स्थान पर अनुमानित एहतियाती सीमा पार नहीं हुई।"
-    else:
-        parts: list[str] = []
-        parts_hi: list[str] = []
-        for a in flagged_a:
-            parts.append(f"{a.spot_name} ({a.risk_level.value}, peak {a.peak_precipitation_mm_hr} mm/hr at {a.peak_time}, threshold {a.threshold_mm_hr} mm/hr)")
-            parts_hi.append(f"{a.spot_name} ({a.risk_level.value})")
-        flagged_summary = "Flagged: " + "; ".join(parts) + "."
-        flagged_summary_hi = "चिह्नित: " + "; ".join(parts_hi) + "।"
-
-    # Keep the Hindi fallback legible and faithful to the same computed flags.
-    flagged_summary_hi = (
-        "इस अवधि में किसी स्थान ने अनुमानित एहतियाती सीमा पार नहीं की।"
-        if not flagged_a else "चिह्नित: " + "; ".join(f"{a.spot_name} ({a.risk_level.value})" for a in flagged_a) + "।"
+    flagged_summary = (
+        "Flagged: " + "; ".join(describe_flag(a) for a in flagged_a) + "."
+        if flagged_a else "No locations exceeded the estimated precautionary threshold in this window."
     )
-
-    english_text = FALLBACK_ENGLISH_TEMPLATE.format(
-        window_start=window_start, window_end=window_end, flagged_summary=flagged_summary
-    )
-    hindi_text = FALLBACK_HINDI_TEMPLATE.format(
-        window_start=window_start, window_end=window_end, flagged_summary_hi=flagged_summary_hi
-    )
+    start, end = nice_time(window_start, with_date=True), nice_time(window_end)
+    english_text = FALLBACK_ENGLISH_TEMPLATE.format(window_start=start, window_end=end, flagged_summary=flagged_summary)
+    hindi_text = FALLBACK_HINDI_TEMPLATE.format(window_start=start, window_end=end, flagged_summary_hi=hindi_summary(flagged_a))
     reasoning = (
-        f"Flagged {len(flagged_a)} of {len(assessments)} assessed locations where the forecast peak "
-        f"rainfall gives an estimated waterlogging risk ratio >= 0.6. Thresholds are initial estimates."
+        f"Flagged {len(flagged_a)} of {len(assessments)} assessed locations where forecast or already-recorded "
+        f"rainfall reaches at least 60% of the location's estimated threshold. "
+        f"{sum(a.trigger == 'recorded_rain' for a in flagged_a)} were flagged by rain already recorded. "
+        f"Thresholds are initial estimates."
     )
 
     flagged_spots: list[dict] = []

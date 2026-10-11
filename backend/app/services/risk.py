@@ -112,3 +112,29 @@ def assess_spot(
         data_available=True,
         verified=verified,
     )
+
+
+_RANK = {RiskLevel.GREEN: 0, RiskLevel.AMBER: 1, RiskLevel.RED: 2}
+
+
+def apply_recorded_rain(assessment: SpotAssessment, recent_values: list[float], recent_times: list[str]) -> SpotAssessment:
+    """Raise the risk level when rain already recorded in the last hours is worse than the forecast.
+
+    Forecasts miss sudden downpours. Rain that has already fallen is a second, independent signal:
+    if it puts the spot at a higher level than the forecast does, that level wins and the
+    assessment is marked trigger="recorded_rain". The forecast peak fields are left unchanged.
+    """
+    clean = [(float(v), t) for v, t in zip(recent_values, recent_times) if isinstance(v, (int, float)) and math.isfinite(v) and v >= 0]
+    if not clean or assessment.threshold_mm_hr <= 0:
+        return assessment
+    peak, peak_time = max(clean, key=lambda item: item[0])
+    assessment.recent_peak_mm_hr = round(peak, 2)
+    assessment.recent_peak_time = peak_time
+    ratio = peak / assessment.threshold_mm_hr
+    level = classify_risk(ratio)
+    if _RANK[level] > _RANK[assessment.risk_level]:
+        assessment.risk_level = level
+        assessment.risk_ratio = round(ratio, 4)
+        assessment.trigger = "recorded_rain"
+        assessment.data_available = True
+    return assessment

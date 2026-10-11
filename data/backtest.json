@@ -1,0 +1,24 @@
+{
+  "generated_on": "2026-10-11",
+  "seasons": [
+    "2024-06-15 to 2024-09-30",
+    "2025-06-15 to 2025-09-30"
+  ],
+  "spots": 26,
+  "days": 216,
+  "days_with_any_event": 19,
+  "spot_days": 5616,
+  "events": 102,
+  "caught_by_forecast": 24,
+  "missed_by_forecast": 78,
+  "false_alarms": 102,
+  "forecast_flags": 160,
+  "missed_with_earlier_watch_level_rain": 9,
+  "worst_event": {
+    "date": "2024-07-31",
+    "spot": "Mathura Road (Ashram)",
+    "recorded_mm_hr": 85.7,
+    "forecast_mm_hr": 2.0
+  },
+  "method": "A spot-day is flagged when the day-ahead forecast peak reaches 60% of the spot's threshold. An event is a recorded hourly peak at or above the threshold. A false alarm is a flag on a day whose recorded peak stayed under 60% of the threshold. Recorded rain is a weather-model analysis, not a gauge reading. Thresholds are unverified estimates. Flooding is not measured."
+}

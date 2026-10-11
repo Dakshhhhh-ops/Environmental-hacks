@@ -19,6 +19,7 @@ class RiskLevel(str, Enum):
 
 class DataSource(str, Enum):
     LIVE = "live"
+    REPLAY_DAY_AHEAD_FORECAST = "replay_day_ahead_forecast"
     REPLAY_HISTORICAL_FORECAST = "replay_historical_forecast"
     REPLAY_ARCHIVE = "replay_archive"
     REPLAY_ARCHIVE_FALLBACK = "replay_archive_fallback"
@@ -77,6 +78,10 @@ class SpotAssessment(BaseModel):
     assessment_window_end: str
     data_available: bool = True
     verified: bool = False
+    # "forecast" or "recorded_rain": which signal set the risk level.
+    trigger: str = "forecast"
+    recent_peak_mm_hr: Optional[float] = None
+    recent_peak_time: Optional[str] = None
 
     @field_validator("risk_ratio")
     @classmethod

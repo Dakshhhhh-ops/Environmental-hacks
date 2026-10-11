@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 import json
 import os
 import re
@@ -18,7 +19,7 @@ from ..models import (
     VerifyResponse, HistoryResponse,
 )
 from ..services.spots_loader import load_spots
-from ..services.risk import assess_spot
+from ..services.risk import assess_spot, apply_recorded_rain
 from ..services.routing import PLACES, check_route
 from ..services.agent import generate_proposal, agent_provider, agent_model_id
 from ..services.storage import get_storage
@@ -100,7 +101,7 @@ async def list_spots():
     return {"spots": out}
 
 
-async def _run_assessment(mode: str, date: Optional[str], use_synthetic: bool = False):
+async def _run_assessment(mode: str, date: Optional[str], use_synthetic: bool = False, as_of_hour: int = 0):
     """Shared assessment logic. Returns (assessments, window_start, window_end, provider_used, errors)."""
     from ..config import settings
     spots = load_spots()
@@ -142,6 +143,7 @@ async def _run_assessment(mode: str, date: Optional[str], use_synthetic: bool = 
                 a.data_available = False
             else:
                 a = assess_spot(spot, r["values"], r["times"], r["window_start"], r["window_end"], DataSource.LIVE, cal)
+                apply_recorded_rain(a, r.get("recent_values", []), r.get("recent_times", []))
             assessments.append(a)
         err_msg = "; ".join(errors) if errors else None
         return assessments, w_start, w_end, "open-meteo", err_msg
@@ -149,8 +151,8 @@ async def _run_assessment(mode: str, date: Optional[str], use_synthetic: bool = 
     else:  # replay
         assert date is not None
         _parse_date(date)
-        results = await fetch_replay_all(spots, date, timeout=settings.openmeteo_timeout_seconds, max_concurrency=settings.openmeteo_max_concurrency)
-        w_start, w_end = _replay_window(date)
+        results = await fetch_replay_all(spots, date, timeout=settings.openmeteo_timeout_seconds, max_concurrency=settings.openmeteo_max_concurrency, as_of_hour=as_of_hour)
+        w_start, w_end = _replay_window(date, as_of_hour)
         assessments = []
         errors = []
         # Determine dominant data source
@@ -175,6 +177,7 @@ async def _run_assessment(mode: str, date: Optional[str], use_synthetic: bool = 
             # For API response we include forecast assessment only; observed is used in verification
             if not ft:
                 a.data_available = False
+            apply_recorded_rain(a, r.get("recent_values", []), r.get("recent_times", []))
             # Stash observed data for verification use (not part of SpotAssessment model, but keep as attribute)
             # We'll store it separately in proposal if needed
             assessments.append(a)
@@ -219,6 +222,17 @@ async def get_risk(
     }
 
 
+# --- Backtest ---
+
+@router.get("/backtest")
+async def get_backtest():
+    """Two-season comparison of day-ahead forecasts with recorded rain, produced by scripts/backtest.py."""
+    path = Path(__file__).resolve().parents[3] / "data" / "backtest.json"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="backtest has not been generated; run scripts/backtest.py")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 # --- Route check ---
 
 class LatLon(BaseModel):
@@ -254,6 +268,8 @@ class ProposalCreateBody(BaseModel):
     mode: str = "live"
     date: Optional[str] = None
     synthetic: bool = False
+    # Replay only: the hour of the day the dispatcher is "standing at".
+    as_of_hour: int = Field(0, ge=0, le=23)
 
 
 @router.post("/proposals")
@@ -270,7 +286,7 @@ async def create_proposal(body: ProposalCreateBody):
     if synthetic and not date:
         date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    assessments, w_start, w_end, provider, err = await _run_assessment(mode, date, use_synthetic=synthetic)
+    assessments, w_start, w_end, provider, err = await _run_assessment(mode, date, use_synthetic=synthetic, as_of_hour=body.as_of_hour if mode == "replay" else 0)
     if not any(a.data_available for a in assessments):
         raise HTTPException(status_code=503, detail=err or "No usable rainfall data was available. Retry or explicitly select the synthetic demo fixture.")
 
@@ -311,6 +327,7 @@ async def create_proposal(body: ProposalCreateBody):
         "observed_map": observed_map,
         "mode": mode,
         "date": date,
+        "as_of_hour": body.as_of_hour if mode == "replay" else None,
         "provider_used": provider,
         "created_at": now,
         "published_at": None,

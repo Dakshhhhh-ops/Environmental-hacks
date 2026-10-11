@@ -18,7 +18,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from ..models import RiskLevel, SpotAssessment
-from .bedrock import _build_flagged_payload, build_fallback_proposal, validate_proposal_json
+from .bedrock import _build_flagged_payload, build_fallback_proposal, describe_flag, validate_proposal_json
 from .storage import get_storage
 
 
@@ -32,7 +32,8 @@ ACTION <spot_id>: <one short action>   (one line for each spot in worst_spots)
 Rules:
 - In SUMMARY and REASONING write the spot_name, never the spot_id.
 - Use only values returned by the tools. Never invent rainfall values, risk levels, or locations.
-- Rainfall is a proxy for possible waterlogging, not a confirmed flood.
+- Rainfall is a proxy for possible waterlogging, not a confirmed flood. Never say a place is flooded, under water, or has high water levels: you only know about rain.
+- If high_risk_from_recorded_rain or watch_from_recorded_rain is above zero, say first that rain is already falling and the forecast did not predict it.
 - Each spot has a "status" field. Repeat it as given: amber means the forecast peak is close to but still below the threshold; red means it reached or passed the threshold.
 - Actions are for vehicle dispatch only. For a red spot: hold trips through it until a dispatcher confirms conditions. For an amber spot: check conditions before routing vehicles through it. Never order evacuations or emergency response, and never say a route is safe."""
 
@@ -83,6 +84,16 @@ def parse_briefing(text: str, flagged_ids: set[str]) -> Briefing:
 # A small model loses the thread on long lists, so it sees only the worst few spots.
 MAX_SPOTS_FOR_MODEL = 5
 
+# Claims the data cannot support. Rainfall is the only input: nothing here observes water on the road.
+UNSUPPORTED_CLAIMS = ("water level", "flooded", "is flooding", "are flooding", "submerged", "inundated",
+                      "is safe", "are safe", "safe to", "safely", "evacuat", "confirmed flood", "guarantee")
+
+
+def makes_unsupported_claim(text: str) -> bool:
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in UNSUPPORTED_CLAIMS)
+
+
 DEFAULT_ACTIONS = {
     RiskLevel.RED: "Hold trips through this spot until a dispatcher confirms conditions.",
     RiskLevel.AMBER: "Check conditions before routing vehicles through this spot.",
@@ -91,6 +102,9 @@ DEFAULT_ACTIONS = {
 
 def _status(a: SpotAssessment) -> str:
     pct = round(a.risk_ratio * 100)
+    if a.trigger == "recorded_rain":
+        return (f"rain ALREADY RECORDED in the last hours reached {pct}% of the estimated threshold; "
+                f"the forecast alone did not flag this spot")
     if a.risk_level == RiskLevel.RED:
         return f"forecast peak reached {pct}% of the estimated threshold (at or above it)"
     return f"forecast peak reached {pct}% of the estimated threshold (close to it, still below)"
@@ -159,6 +173,8 @@ def _run_agent(flagged: list[dict], window_start: str, window_end: str, data_sou
             "total_spots_assessed": total,
             "high_risk_count": sum(f["risk_level"] == "red" for f in flagged),
             "watch_count": sum(f["risk_level"] == "amber" for f in flagged),
+            "high_risk_from_recorded_rain": sum(f["risk_level"] == "red" and f["trigger"] == "recorded_rain" for f in flagged),
+            "watch_from_recorded_rain": sum(f["risk_level"] == "amber" and f["trigger"] == "recorded_rain" for f in flagged),
             "worst_spots": worst,
         }, ensure_ascii=False)
 
@@ -197,13 +213,16 @@ def _assemble(briefing: Briefing, assessments: list[SpotAssessment], window_star
     red = [a.spot_name for a in flagged_a if a.risk_level == RiskLevel.RED]
     amber = [a.spot_name for a in flagged_a if a.risk_level == RiskLevel.AMBER]
     english = briefing.english_summary.strip()
-    # Reject a summary that leaked raw spot ids; the computed sentence is clearer.
-    if not english or sum(a.spot_id in english for a in flagged_a if "_" in a.spot_id) >= 2:
+    # Reject a summary that leaked raw spot ids or claims flooding or safety; use the computed sentence.
+    if not english or makes_unsupported_claim(english) or sum(a.spot_id in english for a in flagged_a if "_" in a.spot_id) >= 2:
         worst = max(flagged_a, key=lambda a: a.risk_ratio)
         english = (
             f"{len(red)} low point(s) are at high risk and {len(amber)} are on watch in this window. "
-            f"The worst is {worst.spot_name}, with a forecast peak of {worst.peak_precipitation_mm_hr} mm/hr at {worst.peak_time}."
+            f"The worst is {describe_flag(worst)}."
         )
+    recorded = sum(a.trigger == "recorded_rain" for a in flagged_a)
+    if recorded:
+        english += f" {recorded} of these were flagged by rain already recorded, not by the forecast."
     lists = "\n".join(part for part in (
         f"HIGH RISK ({len(red)}): " + ", ".join(red) + "." if red else "",
         f"WATCH ({len(amber)}): " + ", ".join(amber) + "." if amber else "",
@@ -213,14 +232,21 @@ def _assemble(briefing: Briefing, assessments: list[SpotAssessment], window_star
     proposal = {
         "english_text": english,
         "hindi_text": template["hindi_text"],
-        "reasoning": template["reasoning"] + (f" Agent note: {briefing.reasoning.strip()}" if briefing.reasoning.strip() else ""),
+        "reasoning": template["reasoning"] + (
+            f" Agent note: {briefing.reasoning.strip()}"
+            if briefing.reasoning.strip() and not makes_unsupported_claim(briefing.reasoning) else ""
+        ),
         "flagged_spots": [
             {
                 "spot_id": a.spot_id,
                 "risk_level": a.risk_level.value,
                 "peak_mm_hr": a.peak_precipitation_mm_hr,
                 "peak_time": a.peak_time or window_start,
-                "recommended_action": briefing.actions.get(a.spot_id) or DEFAULT_ACTIONS[a.risk_level],
+                "recommended_action": (
+                    "Rain is already at this level. Hold trips through this spot now."
+                    if a.trigger == "recorded_rain" and a.risk_level == RiskLevel.RED
+                    else next((act for act in [briefing.actions.get(a.spot_id)] if act and not makes_unsupported_claim(act)), DEFAULT_ACTIONS[a.risk_level])
+                ),
             }
             for a in flagged_a
         ],

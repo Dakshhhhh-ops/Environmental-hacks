@@ -143,3 +143,84 @@ def test_route_scoring_counts_only_flagged_spots_near_the_path():
     assert 40 < distance_to_path_m(28.6005, 77.25, path) < 70
     hits, score = score_route(path, spots, {"on_red": "red", "on_green": "green", "far_red": "red"})
     assert [h["spot_id"] for h in hits] == ["on_red"] and score == 10
+
+
+def test_recorded_rain_raises_risk_when_forecast_missed_it():
+    from backend.app.services.risk import apply_recorded_rain
+    from backend.app.services.bedrock import describe_flag
+    quiet = assess_spot(SPOT, [1.0, 2.0], ["2024-07-31T20:00", "2024-07-31T21:00"], "2024-07-31T20:00", "2024-07-31T23:00", DataSource.REPLAY_DAY_AHEAD_FORECAST)
+    assert quiet.risk_level == RiskLevel.GREEN and quiet.trigger == "forecast"
+    hit = apply_recorded_rain(quiet, [0.0, 1.8, SPOT["threshold_mm_hr"] * 2], ["2024-07-31T17:00", "2024-07-31T18:00", "2024-07-31T19:00"])
+    assert hit.risk_level == RiskLevel.RED and hit.trigger == "recorded_rain"
+    assert hit.recent_peak_time == "2024-07-31T19:00" and hit.peak_precipitation_mm_hr == 2.0
+    assert "already recorded" in describe_flag(hit)
+
+
+def test_recorded_rain_never_lowers_a_forecast_flag():
+    from backend.app.services.risk import apply_recorded_rain
+    wet = assess_spot(SPOT, [SPOT["threshold_mm_hr"] * 1.5], ["2024-09-13T06:00"], "2024-09-13T00:00", "2024-09-13T23:00", DataSource.REPLAY_DAY_AHEAD_FORECAST)
+    same = apply_recorded_rain(wet, [0.0, 0.1], ["2024-09-12T22:00", "2024-09-12T23:00"])
+    assert same.risk_level == RiskLevel.RED and same.trigger == "forecast" and same.recent_peak_mm_hr == 0.1
+
+
+def test_replay_marks_forecast_identical_to_archive_as_stand_in(monkeypatch):
+    from backend.app.services import openmeteo
+    hours = [f"2023-07-09T{h:02d}:00" for h in range(24)]
+    rain = [float(h % 5) for h in range(24)]
+    async def fake_day(lat, lon, date, timeout):
+        return {"day_ahead": None, "historical": {"time": hours, "precipitation": rain}, "archive": {"time": hours, "precipitation": rain}, "errors": []}
+    monkeypatch.setattr(openmeteo, "_fetch_day", fake_day)
+    result = asyncio.run(openmeteo.fetch_replay_spot(28.6, 77.2, "2023-07-09"))
+    assert result["forecast_source"] == "replay_archive_fallback" and result["fallback_used"]
+
+
+def test_replay_uses_day_ahead_forecast_and_recent_recorded_rain(monkeypatch):
+    from backend.app.services import openmeteo
+    hours = [f"2024-07-31T{h:02d}:00" for h in range(24)]
+    async def fake_day(lat, lon, date, timeout):
+        return {"day_ahead": {"time": hours, "precipitation_previous_day1": [1.0] * 24}, "historical": None,
+                "archive": {"time": hours, "precipitation": [0.0] * 19 + [25.8, 36.0, 38.5, 58.1, 40.8]}, "errors": []}
+    monkeypatch.setattr(openmeteo, "_fetch_day", fake_day)
+    result = asyncio.run(openmeteo.fetch_replay_spot(28.6, 77.2, "2024-07-31", as_of_hour=20))
+    assert result["forecast_source"] == "replay_day_ahead_forecast"
+    assert result["window_start"] == "2024-07-31T20:00" and len(result["forecast_values"]) == 4
+    assert result["recent_times"] == ["2024-07-31T17:00", "2024-07-31T18:00", "2024-07-31T19:00"] and max(result["recent_values"]) == 25.8
+
+
+def test_batched_weather_request_maps_locations_in_order(monkeypatch):
+    from backend.app.services import openmeteo
+    seen = {}
+    async def fake_json(url, timeout=15):
+        seen["url"] = url
+        return [{"hourly": {"time": ["2024-07-31T00:00"], "precipitation": [1.0]}}, {"hourly": {"time": ["2024-07-31T00:00"], "precipitation": [2.0]}}]
+    monkeypatch.setattr(openmeteo, "_fetch_json_async", fake_json)
+    spots = [{"lat": 28.6, "lon": 77.2}, {"lat": 28.7, "lon": 77.1}]
+    hourly = asyncio.run(openmeteo._fetch_hourly_bulk(openmeteo.ARCHIVE_URL, spots, {"hourly": "precipitation"}, 5))
+    assert "latitude=28.6,28.7" in seen["url"] and "longitude=77.2,77.1" in seen["url"]
+    assert [h["precipitation"][0] for h in hourly] == [1.0, 2.0]
+    async def short_json(url, timeout=15):
+        return {"hourly": {}}
+    monkeypatch.setattr(openmeteo, "_fetch_json_async", short_json)
+    with pytest.raises(openmeteo.OpenMeteoError):
+        asyncio.run(openmeteo._fetch_hourly_bulk(openmeteo.ARCHIVE_URL, spots, {"hourly": "precipitation"}, 5))
+
+
+def test_agent_claims_of_flooding_or_safety_are_replaced_with_computed_text():
+    from backend.app.services import agent
+    assessments = [_assess_for_agent("a", 12.0, 18.4)]
+    briefing = agent.Briefing(english_summary="Spot a is already experiencing high water levels.",
+                              reasoning="The alternate road is safe to use.", actions={"a": "Evacuate the area"})
+    proposal = agent._assemble(briefing, assessments, "2025-07-09T00:00", "2025-07-09T11:00")
+    assert "water level" not in proposal["english_text"] and "1 low point(s) are at high risk" in proposal["english_text"]
+    assert "Agent note" not in proposal["reasoning"]
+    assert proposal["flagged_spots"][0]["recommended_action"] == agent.DEFAULT_ACTIONS[RiskLevel.RED]
+
+
+def test_hindi_summary_groups_spots_by_level_and_notes_rain_already_falling():
+    from backend.app.services.bedrock import hindi_summary
+    from backend.app.services.risk import apply_recorded_rain
+    red = _assess_for_agent("a", 12.0, 18.4)
+    amber = apply_recorded_rain(_assess_for_agent("b", 10.0, 1.0), [7.0], ["2025-07-09T05:00"])
+    text = hindi_summary([red, amber])
+    assert "उच्च जोखिम (1): Spot a" in text and "सतर्कता (1): Spot b" in text and "बारिश अभी हो रही है" in text
+    assert hindi_summary([]).startswith("इस अवधि में")
