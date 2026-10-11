@@ -9,30 +9,80 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="#"><span class="brand-mark">U</span><span>UNDERPASS <b>SENTINEL</b><small>DELHI · DECISION SUPPORT</small></span></a>
-    <div class="mode"><button id="liveBtn" class="mode-btn active">LIVE</button><button id="replayBtn" class="mode-btn">REPLAY</button><input id="dateInput" type="date" hidden aria-label="Historical replay date"></div>
-    <div class="top-actions"><span id="sourceStatus" class="source"><i></i> CONNECTING</span><button id="runBtn" class="primary">Run assessment <span>↗</span></button></div>
-  </header>
-  <main>
-    <div class="replay-banner" id="replayBanner" hidden>◷ &nbsp; REPLAY — HISTORICAL DATA <span>Historical forecasts may not represent information available at the time.</span></div>
-    <section class="workspace">
-      <div class="map-wrap"><div id="map" role="application" aria-label="Map of Delhi candidate waterlogging risk locations"></div>
-        <div class="map-heading"><span class="eyebrow">DELHI · NETWORK OVERVIEW</span><h1>Rainfall risk monitor</h1><p id="windowLabel">Waiting for assessment</p></div>
-        <div class="map-legend"><span><i class="dot green"></i>LOW</span><span><i class="dot amber"></i>WATCH</span><span><i class="dot red"></i>HIGH</span></div>
-        <div class="disclaimer">ESTIMATED WATERLOGGING RISK <span>Rainfall proxy · unverified thresholds · not a flood prediction</span></div>
+  <header class="topbar">
+    <a class="brand" href="#"><span class="brand-mark">U</span><span>UNDERPASS <b>SENTINEL</b><small>DELHI · MONSOON DISPATCH SUPPORT</small></span></a>
+    <div class="controls">
+      <div class="mode"><button id="liveBtn" class="mode-btn active">LIVE</button><button id="replayBtn" class="mode-btn">REPLAY</button></div>
+      <div id="replayControls" class="replay-controls" hidden>
+        <input id="dateInput" type="date" aria-label="Historical replay date">
+        <button class="chip" data-date="2023-07-09">9 Jul 2023</button>
+        <button class="chip" data-date="2024-06-28">28 Jun 2024</button>
+        <button class="chip" data-synthetic="1">Storm drill</button>
       </div>
+    </div>
+    <div class="top-actions"><span id="sourceStatus" class="source"><i></i> CONNECTING</span><button id="runBtn" class="primary">Run assessment</button></div>
+  </header>
+
+  <main>
+    <section class="kpis" aria-label="Network summary">
+      <div class="kpi"><span>LOW POINTS MONITORED</span><b id="kpiSpots">—</b><small id="kpiZones">across Delhi</small></div>
+      <div class="kpi red"><span>HIGH RISK</span><b id="kpiRed">—</b><small>forecast at or above threshold</small></div>
+      <div class="kpi amber"><span>WATCH</span><b id="kpiAmber">—</b><small>within 60% of threshold</small></div>
+      <div class="kpi"><span>PEAK FORECAST RAIN</span><b id="kpiPeak">—</b><small id="kpiPeakWhere">run an assessment</small></div>
+      <div class="kpi"><span>ALERT TRACK RECORD</span><b id="kpiAccuracy">—</b><small id="kpiAccuracyNote">no verified alerts yet</small></div>
+    </section>
+
+    <section class="workspace">
+      <div class="map-wrap">
+        <div id="map" role="application" aria-label="Map of Delhi waterlogging risk locations"></div>
+        <div class="map-heading"><span class="eyebrow">DELHI · NETWORK OVERVIEW</span><h1 id="mapTitle">Rainfall risk monitor</h1><p id="windowLabel">No assessment yet. Choose live or replay, then run.</p></div>
+        <div class="map-legend"><span><i class="dot green"></i>LOW</span><span><i class="dot amber"></i>WATCH</span><span><i class="dot red"></i>HIGH</span><span><i class="line rec"></i>SUGGESTED ROUTE</span></div>
+        <div class="disclaimer">ESTIMATED RISK <span>Rainfall is a proxy · thresholds unverified · not a flood prediction</span></div>
+        <div id="busy" class="busy" hidden><div class="spinner"></div><b id="busyTitle">Working…</b><span id="busyNote"></span></div>
+      </div>
+
       <aside class="side-panel" aria-label="Dispatcher panel">
-        <div class="panel-tabs"><button class="tab active" data-tab="dispatch">DISPATCH</button><button class="tab" data-tab="history">HISTORY <span id="historyCount">0</span></button></div>
-        <section id="dispatchView">
-          <div class="steps" id="steps" aria-label="Workflow progress"><span class="done">01 Forecast</span><span>02 Assess</span><span>03 Propose</span><span>04 Approve</span><span>05 Act</span><span>06 Verify</span></div>
-          <div id="proposalArea" class="proposal-area"><div class="empty"><span>◉</span><h2>Ready when you are</h2><p>Run an assessment to compare rainfall forecasts with estimated location thresholds.</p><button id="emptyRun" class="primary">Run assessment ↗</button></div></div>
-          <div class="subscribe"><label for="emailInput">ALERT DISTRIBUTION</label><div class="email-row"><input id="emailInput" type="email" placeholder="coordinator@example.org"><button id="subscribeBtn" aria-label="Subscribe email">→</button></div><p id="subscribeMsg">Email recipients must confirm their SNS subscription.</p></div>
+        <div class="panel-tabs">
+          <button class="tab active" data-tab="brief">BRIEFING</button>
+          <button class="tab" data-tab="route">ROUTE CHECK</button>
+          <button class="tab" data-tab="history">TRACK RECORD <span id="historyCount">0</span></button>
+        </div>
+
+        <section id="briefView" class="view">
+          <div class="steps" id="steps" aria-label="Workflow progress"></div>
+          <div id="proposalArea" class="proposal-area"></div>
+          <div class="subscribe"><label for="emailInput">WHO RECEIVES APPROVED ALERTS</label><div class="email-row"><input id="emailInput" type="email" placeholder="coordinator@example.org"><button id="subscribeBtn">Add</button></div><p id="subscribeMsg">Alerts go out only after a dispatcher approves them.</p></div>
         </section>
-        <section id="historyView" hidden><div class="history-head"><h2>Verification history</h2><p>Rainfall comparisons; no flood observations are available.</p></div><div id="historyList" class="history-list"><div class="empty-small">No completed verifications yet.</div></div></section>
+
+        <section id="routeView" class="view" hidden>
+          <div class="route-form">
+            <h2>Is this trip safe to dispatch?</h2>
+            <p>Pick where the vehicle starts and ends. Sentinel compares driving routes against the spots flagged in the current assessment.</p>
+            <label for="fromSel">FROM</label><select id="fromSel"></select>
+            <button id="swapBtn" class="swap" aria-label="Swap origin and destination">⇅</button>
+            <label for="toSel">TO</label><select id="toSel"></select>
+            <button id="routeBtn" class="primary wide">Check route</button>
+          </div>
+          <div id="routeResult" class="route-result"></div>
+        </section>
+
+        <section id="historyView" class="view" hidden>
+          <div class="history-head"><h2>How past alerts held up</h2><p>Each alert is compared with the rain that was later recorded. Thresholds adjust after false alarms and misses. No flood observations are used.</p></div>
+          <div id="historyStats" class="history-stats"></div>
+          <div id="historyList" class="history-list"></div>
+        </section>
       </aside>
     </section>
-    <section class="locations"><div class="section-title"><div><span class="eyebrow">ASSESSMENT LOCATIONS</span><h2>Candidate spots <span id="spotCount">—</span></h2></div><span class="unverified">ALL COORDINATES & THRESHOLDS UNVERIFIED</span></div><div id="spotGrid" class="spot-grid"><div class="loading">Loading location inputs…</div></div></section>
+
+    <section class="locations">
+      <div class="section-title">
+        <div><span class="eyebrow">ALL MONITORED LOW POINTS</span><h2>Locations <span id="spotCount">—</span></h2></div>
+        <div class="filters"><button class="chip active" data-filter="all">All</button><button class="chip" data-filter="flagged">Flagged only</button><span class="unverified">COORDINATES &amp; THRESHOLDS ARE UNVERIFIED ESTIMATES</span></div>
+      </div>
+      <div class="table-wrap"><table class="spot-table"><thead><tr><th>Location</th><th>Zone</th><th>Status</th><th>Forecast peak vs threshold</th><th>Hourly rain</th><th>Peak at</th></tr></thead><tbody id="spotRows"><tr><td colspan="6" class="loading">Loading locations…</td></tr></tbody></table></div>
+    </section>
   </main>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="config.js"></script><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script><script type="module" src="app.js"></script>
 </body></html>

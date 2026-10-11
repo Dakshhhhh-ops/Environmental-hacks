@@ -10,7 +10,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Body
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..models import (
     RiskLevel, DataSource, SpotAssessment, AssessmentResponse,
@@ -19,6 +19,7 @@ from ..models import (
 )
 from ..services.spots_loader import load_spots
 from ..services.risk import assess_spot
+from ..services.routing import PLACES, check_route
 from ..services.agent import generate_proposal, agent_provider, agent_model_id
 from ..services.storage import get_storage
 from ..services.sns import is_sns_configured, get_sns_topic_arn, publish_alert, subscribe_email, SnsError
@@ -114,7 +115,11 @@ async def _run_assessment(mode: str, date: Optional[str], use_synthetic: bool = 
         assessments: list[SpotAssessment] = []
         for spot in spots:
             cal = thresholds.get(spot["id"])
-            vals = SYNTHETIC_FIXTURE.get(spot["id"], [0.0] * 12)
+            vals = SYNTHETIC_FIXTURE.get(spot["id"])
+            if vals is None:
+                # Spots without a hand-written fixture reuse one, scaled, so the demo covers the whole network.
+                base = list(SYNTHETIC_FIXTURE.values())[len(assessments) % len(SYNTHETIC_FIXTURE)]
+                vals = [round(v * (0.35 + 0.15 * (len(assessments) % 5)), 1) for v in base]
             times = [f"{synthetic_date}T{str(h).zfill(2)}:00" for h in range(12)]
             a = assess_spot(spot, vals, times, w_start, w_end, DataSource.SYNTHETIC, cal)
             assessments.append(a)
@@ -212,6 +217,35 @@ async def get_risk(
         "provider_used": provider,
         "error": err,
     }
+
+
+# --- Route check ---
+
+class LatLon(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+
+
+class RouteCheckBody(BaseModel):
+    origin: LatLon
+    destination: LatLon
+    risk: dict[str, str] = {}
+
+
+@router.get("/places")
+async def list_places():
+    return {"places": PLACES}
+
+
+@router.post("/route-check")
+async def route_check(body: RouteCheckBody):
+    """Score driving alternatives by the flagged spots they pass. Risk levels come from the caller's current assessment."""
+    try:
+        return await check_route(
+            (body.origin.lat, body.origin.lon), (body.destination.lat, body.destination.lon), load_spots(), body.risk
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
 
 
 # --- Proposals ---

@@ -36,7 +36,7 @@ class Settings:
 
         # Open-Meteo
         self.openmeteo_timeout_seconds: float = float(_env("OPENMETEO_TIMEOUT_SECONDS", "15") or "15")
-        self.openmeteo_max_concurrency: int = int(_env("OPENMETEO_MAX_CONCURRENCY", "6") or "6")
+        self.openmeteo_max_concurrency: int = int(_env("OPENMETEO_MAX_CONCURRENCY", "8") or "8")
         self.live_forecast_url: str = "https://api.open-meteo.com/v1/forecast"
         self.historical_forecast_url: str = "https://historical-forecast-api.open-meteo.com/v1/forecast"
         self.archive_url: str = "https://archive-api.open-meteo.com/v1/archive"

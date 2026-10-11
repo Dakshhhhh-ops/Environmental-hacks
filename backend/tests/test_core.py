@@ -61,7 +61,7 @@ def test_proposal_validator_rejects_unknown_or_inconsistent_spots():
 
 def test_all_candidate_locations_are_unverified():
     data = json.loads((Path(__file__).resolve().parents[2] / "data" / "spots.json").read_text(encoding="utf-8"))
-    assert len(data["spots"]) == 8
+    assert len(data["spots"]) >= 8
     assert all(s["verified"] is False for s in data["spots"])
 
 
@@ -130,3 +130,16 @@ def _assess_for_agent(spot_id, threshold, peak):
         "data_source": "synthetic", "assessment_window_start": "2025-07-09T00:00",
         "assessment_window_end": "2025-07-09T11:00",
     })
+
+
+def test_route_scoring_counts_only_flagged_spots_near_the_path():
+    from backend.app.services.routing import distance_to_path_m, score_route
+    path = [[28.60, 77.20], [28.60, 77.30]]
+    spots = [
+        {"id": "on_red", "name": "On route red", "lat": 28.6005, "lon": 77.25},
+        {"id": "on_green", "name": "On route green", "lat": 28.6005, "lon": 77.26},
+        {"id": "far_red", "name": "Far red", "lat": 28.65, "lon": 77.25},
+    ]
+    assert 40 < distance_to_path_m(28.6005, 77.25, path) < 70
+    hits, score = score_route(path, spots, {"on_red": "red", "on_green": "green", "far_red": "red"})
+    assert [h["spot_id"] for h in hits] == ["on_red"] and score == 10

@@ -30,6 +30,7 @@ class Spot(BaseModel):
 
     id: str
     name: str
+    zone: Optional[str] = None
     lat: float
     lon: float
     threshold_mm_hr: float

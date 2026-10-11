@@ -4,6 +4,9 @@ from fastapi.testclient import TestClient
 
 from backend.app.main import app
 from backend.app.services import storage as storage_module
+from backend.app.services.spots_loader import load_spots as _load_spots
+
+SPOT_COUNT = len(_load_spots())
 
 
 def test_health_spots_and_invalid_inputs(tmp_path, monkeypatch):
@@ -16,7 +19,7 @@ def test_health_spots_and_invalid_inputs(tmp_path, monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", lambda *args, **kwargs: Reachable())
     client = TestClient(app)
     spots = client.get("/api/spots")
-    assert spots.status_code == 200 and len(spots.json()["spots"]) == 8
+    assert spots.status_code == 200 and len(spots.json()["spots"]) == SPOT_COUNT
     assert client.get("/api/risk?mode=replay").status_code == 400
     assert client.get("/api/risk?mode=other").status_code == 422
     assert client.post("/api/subscribe", json={"email": "not-an-email"}).status_code == 400
@@ -35,7 +38,7 @@ def test_proposal_approval_rejection_and_local_skipped(tmp_path, monkeypatch):
     assert created.status_code == 200, created.text
     proposal = created.json()
     assert proposal["generated_by"] in ("strands-agent", "fallback")
-    assert len(proposal["assessments"]) == 8
+    assert len(proposal["assessments"]) == SPOT_COUNT
     published = client.post(f"/api/proposals/{proposal['id']}/approve")
     assert published.status_code == 200
     assert published.json()["delivery_state"] == "local-skipped"
@@ -89,7 +92,7 @@ def test_verification_is_rainfall_based_and_repeat_does_not_adjust_twice(tmp_pat
     result = client.post(f"/api/proposals/{proposal['id']}/verify")
     assert result.status_code == 200
     records = result.json()["records"]
-    assert len(records) == 8
+    assert len(records) == SPOT_COUNT
     assert records[0]["outcome"] == "false_alarm"
     assert records[0]["based_on_flood_observations"] is False
     assert records[0]["threshold_after"] == 12.6
@@ -134,6 +137,6 @@ def test_external_weather_failure_marks_data_unavailable_and_blocks_proposal(tmp
     monkeypatch.setattr(routes, "fetch_replay_all", failed_replay)
     client = TestClient(app)
     result = client.get("/api/risk?mode=replay&date=2025-05-01").json()
-    assert len(result["spots"]) == len(load_spots()) == 8
+    assert len(result["spots"]) == len(load_spots()) == SPOT_COUNT
     assert all(not spot["data_available"] for spot in result["spots"])
     assert client.post("/api/proposals", json={"mode": "replay", "date": "2025-05-01"}).status_code == 503

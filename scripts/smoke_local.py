@@ -53,5 +53,5 @@ with httpx.Client(base_url=base, timeout=45) as client:
                           "outcomes": sorted({r["outcome"] for r in records}), "history_count": len(history),
                           "observation_sources": sorted({r["observation_source"] for r in records})}, ensure_ascii=False))
 
-if page.status_code != 200 or len(spots) != 8 or (not args.synthetic and len(records) != len(spots)):
+if page.status_code != 200 or len(spots) < 8 or (not args.synthetic and len(records) != len(spots)):
     sys.exit("Local smoke workflow did not return all expected records.")
