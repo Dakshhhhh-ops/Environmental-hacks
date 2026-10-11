@@ -23,13 +23,14 @@ from .storage import get_storage
 
 
 SYSTEM_PROMPT = """You brief a Delhi transport dispatcher on rain-related waterlogging risk at underpasses.
-First call get_flagged_spots. Then call get_calibration_history once for each flagged spot.
+First call get_flagged_spots. Then call get_calibration_history for the worst one or two spots.
 Then reply in exactly this format and nothing else:
-SUMMARY: <2-3 plain English sentences naming the flagged spots, worst first>
+SUMMARY: <2-3 plain English sentences: how many spots are high risk and how many are on watch, then the worst two or three by spot_name>
 REASONING: <1-2 sentences on why they were flagged and how past alerts for them performed>
-ACTION <spot_id>: <one short action>   (one line per flagged spot)
+ACTION <spot_id>: <one short action>   (one line for each spot in worst_spots)
 
 Rules:
+- In SUMMARY and REASONING write the spot_name, never the spot_id.
 - Use only values returned by the tools. Never invent rainfall values, risk levels, or locations.
 - Rainfall is a proxy for possible waterlogging, not a confirmed flood.
 - Each spot has a "status" field. Repeat it as given: amber means the forecast peak is close to but still below the threshold; red means it reached or passed the threshold.
@@ -78,6 +79,9 @@ def parse_briefing(text: str, flagged_ids: set[str]) -> Briefing:
         raise ValueError("agent reply had no SUMMARY line")
     return Briefing(english_summary=" ".join(summary), reasoning=" ".join(reasoning), actions=actions)
 
+
+# A small model loses the thread on long lists, so it sees only the worst few spots.
+MAX_SPOTS_FOR_MODEL = 5
 
 DEFAULT_ACTIONS = {
     RiskLevel.RED: "Hold trips through this spot until a dispatcher confirms conditions.",
@@ -147,12 +151,15 @@ def _run_agent(flagged: list[dict], window_start: str, window_end: str, data_sou
     def get_flagged_spots() -> str:
         """Return the computed assessment: every flagged spot with its risk level, peak rainfall, peak time and estimated threshold."""
         tools_called.append("get_flagged_spots")
+        worst = sorted(flagged, key=lambda f: -f["risk_ratio"])[:MAX_SPOTS_FOR_MODEL]
         return json.dumps({
             "window_start": window_start,
             "window_end": window_end,
             "data_source": data_source,
             "total_spots_assessed": total,
-            "flagged_spots": flagged,
+            "high_risk_count": sum(f["risk_level"] == "red" for f in flagged),
+            "watch_count": sum(f["risk_level"] == "amber" for f in flagged),
+            "worst_spots": worst,
         }, ensure_ascii=False)
 
     @tool
@@ -187,14 +194,21 @@ def _assemble(briefing: Briefing, assessments: list[SpotAssessment], window_star
     template = build_fallback_proposal(assessments, window_start, window_end)
     flagged_a = [a for a in assessments if a.risk_level in (RiskLevel.AMBER, RiskLevel.RED)]
 
-    facts = "; ".join(
-        f"{a.spot_name} ({a.risk_level.value}, peak {a.peak_precipitation_mm_hr} mm/hr at {a.peak_time}, threshold {a.threshold_mm_hr} mm/hr)"
-        for a in flagged_a
-    )
+    red = [a.spot_name for a in flagged_a if a.risk_level == RiskLevel.RED]
+    amber = [a.spot_name for a in flagged_a if a.risk_level == RiskLevel.AMBER]
     english = briefing.english_summary.strip()
-    if not english:
-        raise ValueError("agent returned an empty briefing")
-    english = f"{english}\n\nComputed values: {facts}.\n\n{DISCLAIMER}"
+    # Reject a summary that leaked raw spot ids; the computed sentence is clearer.
+    if not english or sum(a.spot_id in english for a in flagged_a if "_" in a.spot_id) >= 2:
+        worst = max(flagged_a, key=lambda a: a.risk_ratio)
+        english = (
+            f"{len(red)} low point(s) are at high risk and {len(amber)} are on watch in this window. "
+            f"The worst is {worst.spot_name}, with a forecast peak of {worst.peak_precipitation_mm_hr} mm/hr at {worst.peak_time}."
+        )
+    lists = "\n".join(part for part in (
+        f"HIGH RISK ({len(red)}): " + ", ".join(red) + "." if red else "",
+        f"WATCH ({len(amber)}): " + ", ".join(amber) + "." if amber else "",
+    ) if part)
+    english = f"{english}\n\n{lists}\n\n{DISCLAIMER}"
 
     proposal = {
         "english_text": english,

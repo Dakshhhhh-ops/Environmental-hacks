@@ -104,7 +104,7 @@ def test_agent_reply_parsing_ignores_unknown_spots_and_keeps_computed_values():
     assert [f["spot_id"] for f in proposal["flagged_spots"]] == ["a"]
     assert proposal["flagged_spots"][0]["peak_mm_hr"] == 18.4
     assert proposal["flagged_spots"][0]["risk_level"] == "red"
-    assert "18.4 mm/hr" in proposal["english_text"] and "not a confirmed flood" in proposal["english_text"]
+    assert "HIGH RISK (1): Spot a." in proposal["english_text"] and "not a confirmed flood" in proposal["english_text"]
 
 
 def test_agent_failure_and_no_flags_use_labelled_fallback(monkeypatch):
